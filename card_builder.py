@@ -330,6 +330,7 @@ _CSS = """\
 
 
 _IMG_FIELDS = ("Image", "Question Mask", "Answer Mask")
+BASE_FIELDS = (*_IMG_FIELDS, "Header", "Notes")
 
 
 def _migrate_field_format(col: Collection, nt: NotetypeDict) -> None:
@@ -378,13 +379,41 @@ def _ensure_doc_fields(col: Collection, nt: NotetypeDict) -> bool:
     return True
 
 
+class NoteTypeConflict(Exception):
+    """A note type with our name exists but wasn't made by this add-on."""
+
+
+def is_own_note_type(nt: NotetypeDict) -> bool:
+    """Was this note type made by this add-on (any version)?
+
+    Every release has created the same base fields ("Notes" was "Remarks"
+    before v3), so a note type that has them is ours. One that merely shares
+    the name, e.g. from a shared deck or another add-on, must not get our
+    templates: they reference fields it doesn't have, which Anki rejects
+    ("Field 'Image' not found"), and would blank its existing cards if not.
+    """
+    names = {f["name"] for f in nt["flds"]}
+    if "Remarks" in names:
+        names.add("Notes")
+    return all(f in names for f in BASE_FIELDS)
+
+
 def ensure_note_type(col: Collection, name: str = "PDF Occlusion") -> NotetypeDict:
     mm = col.models
     nt = mm.by_name(name)
-    # Migrate the pre-rename note type so existing cards keep working
+    if nt and not is_own_note_type(nt):
+        raise NoteTypeConflict(
+            f"This collection already has a note type called “{name}” that "
+            "wasn't made by PDF Occlusion, so the add-on can't use it.\n\n"
+            "Rename that note type in Tools → Manage Note Types (or set "
+            "\"note_type_name\" in the add-on's config to another name), "
+            "then create the cards again."
+        )
+    # Migrate the pre-rename note type so existing cards keep working — but
+    # only if it really is ours; anything else by that name is left alone.
     if not nt and name == "PDF Occlusion":
         old = mm.by_name("PDF Image Occlusion")
-        if old:
+        if old and is_own_note_type(old):
             old["name"] = name
             mm.save(old)
             nt = old
@@ -412,8 +441,7 @@ def ensure_note_type(col: Collection, name: str = "PDF Occlusion") -> NotetypeDi
     nt = mm.new(name)
     nt["css"] = _CSS
 
-    for fname in ("Image", "Question Mask", "Answer Mask", "Header", "Notes",
-                  *DOC_FIELDS):
+    for fname in (*BASE_FIELDS, *DOC_FIELDS):
         mm.add_field(nt, mm.new_field(fname))
 
     tmpl = mm.new_template("Card")

@@ -21,7 +21,8 @@ from .occlusion_canvas import (OcclusionCanvas, annotation_rect,
                                draw_annotation)
 from .card_builder import (ensure_note_type, create_occlusion_notes,
                            create_cloze_notes, cloze_note_type,
-                           cloze_card_count, pdf_path_in, SLIDES_PDF_FIELD)
+                           cloze_card_count, pdf_path_in, SLIDES_PDF_FIELD,
+                           NoteTypeConflict)
 from . import ocr
 from .pdf_renderer import (render_pdf, get_text_word_rects, get_page_text,
                            get_table_cell_rects, merge_word_rects)
@@ -1515,8 +1516,12 @@ class PDFOcclusionDialog(QDialog):
 
         # Only when there are boxes: a cloze-only session shouldn't plant
         # the occlusion note type in a collection that has never used it.
-        note_type = (ensure_note_type(mw.col, note_type_name)
-                     if any(tc for _, tc, _c in per_doc) else None)
+        try:
+            note_type = (ensure_note_type(mw.col, note_type_name)
+                         if any(tc for _, tc, _c in per_doc) else None)
+        except NoteTypeConflict as e:
+            showWarning(str(e), parent=self, title="PDF Occlusion")
+            return
 
         cloze_type = cloze_note_type(mw.col)
         if cloze_type is None and any(cloze for _, _, cloze in per_doc):

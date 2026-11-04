@@ -114,7 +114,7 @@ def _notetype_is_current(nt) -> bool:
 
 def _maybe_offer_template_upgrade() -> None:
     from aqt.utils import askUser
-    from .card_builder import ensure_note_type
+    from .card_builder import ensure_note_type, is_own_note_type
 
     if not mw.col:
         return
@@ -124,6 +124,8 @@ def _maybe_offer_template_upgrade() -> None:
           or mw.col.models.by_name("PDF Image Occlusion"))
     if nt is None:
         return  # no cards yet — ensure_note_type runs when the first is made
+    if not is_own_note_type(nt):
+        return  # someone else's note type by that name — not ours to update
     if _notetype_is_current(nt):
         return  # already applied, by us or by an earlier run
 
