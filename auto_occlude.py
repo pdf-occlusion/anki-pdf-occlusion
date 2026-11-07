@@ -726,8 +726,9 @@ class AutoOccludeDialog(QDialog):
             tail = "" if left is None else f", {left} page{'s' if left != 1 else ''} left"
             self.who.setText(f"{a.get('email') or 'Signed in'}{tail}")
         else:
-            self.who.setText("Not signed in")
+            self.who.setText("100 pages free")
         self.sign_btn.setText("Sign out" if signed else "Sign in")
+        self.more_btn.setVisible(signed)
         n = self.slide_counts.get(self.scope.currentData(), 0)
         self.start_btn.setText(f"Auto-occlude {n} slide{'s' if n != 1 else ''}")
         left = self.balance.get("pages_left") if (signed and self.balance) else None
