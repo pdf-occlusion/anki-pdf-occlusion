@@ -42,6 +42,7 @@ ADDON_FILES = [
     "session_store.py",
     "note_recovery.py",
     "pdf_hosting.py",
+    "auto_occlude.py",
     "config.json",
     "config.md",
     "manifest.json",

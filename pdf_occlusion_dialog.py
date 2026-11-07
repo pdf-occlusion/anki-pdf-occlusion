@@ -13,6 +13,7 @@ from aqt.qt import (
 )
 from aqt.utils import askUser, showInfo, showWarning, tooltip
 
+from . import auto_occlude
 from . import note_recovery
 from . import pdf_hosting
 from . import session_store
@@ -84,6 +85,21 @@ _DIALOG_QSS = (
     "QPushButton:checked{background:rgba(131,110,170,0.28);"
     "border-color:#836EAA;}"
 )
+
+# Auto-occlude sits beside Open PDF, outlined in purple: the next step after
+# opening a lecture, a step down from the solid primaries, and unlike a
+# toggled tool it never looks "on".
+def _auto_btn_qss() -> str:
+    a = _accent_color()
+    return (
+        f"QPushButton{{padding:5px 16px;border-radius:6px;font-weight:bold;color:{a};"
+        f"border:1.5px solid {a};background:transparent;}}"
+        "QPushButton:hover{background:rgba(131,110,170,0.16);}"
+        "QPushButton:pressed{background:rgba(131,110,170,0.28);}"
+        "QPushButton:disabled{color:rgba(127,127,127,0.45);"
+        "border-color:rgba(127,127,127,0.18);background:transparent;}"
+    )
+
 
 # The notes-PDF attach control: a quiet split button matching the secondary
 # QPushButtons above (QSS selectors are per-class, so it needs its own copy).
@@ -461,6 +477,11 @@ class PDFOcclusionDialog(QDialog):
         self._cloze_btn.setToolTip("Cloze card from this slide (Ctrl+Shift+V)")
         self._cloze_btn.clicked.connect(self._open_cloze)
 
+        self._auto_btn = QPushButton("Auto-occlude")
+        self._auto_btn.setToolTip("Box the whole PDF for you, then look it over")
+        self._auto_btn.clicked.connect(self._open_auto_occlude)
+        self._auto_btn.setStyleSheet(_auto_btn_qss())
+
         slide_mode_label = QLabel("This slide:")
         slide_mode_label.setStyleSheet("color:rgba(127,127,127,0.9);")
         self._page_mode_combo = QComboBox()
@@ -472,9 +493,9 @@ class PDFOcclusionDialog(QDialog):
         row3.addWidget(self._draw_btn)
         row3.addWidget(self._select_btn)
         row3.addWidget(self._text_btn)
-        row3.addSpacing(10)
         row3.addWidget(self._detect_btn)
         row3.addWidget(self._cloze_btn)
+        row1.insertWidget(1, self._auto_btn)
         row3.addSpacing(10)
         self._detect_hint = QLabel("")
         self._detect_hint.setStyleSheet(
@@ -571,7 +592,7 @@ class PDFOcclusionDialog(QDialog):
         # first three because you type into them, the last two because they
         # have no shortcut and would otherwise be mouse-only.
         for w in (self._draw_btn, self._select_btn, self._text_btn,
-                  self._detect_btn, self._cloze_btn,
+                  self._detect_btn, self._cloze_btn, self._auto_btn,
                   self._zoom_out_btn, self._zoom_in_btn, self._fit_btn,
                   self._prev_btn, self._next_btn):
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1341,6 +1362,7 @@ class PDFOcclusionDialog(QDialog):
         self._text_btn.setEnabled(has)
         self._detect_btn.setEnabled(has)
         self._cloze_btn.setEnabled(has)
+        self._auto_btn.setEnabled(has and not getattr(self, "_auto_run", None))
         self._page_mode_combo.setEnabled(has)
         self._sync_notes_pdf_btn()
 
@@ -1374,6 +1396,95 @@ class PDFOcclusionDialog(QDialog):
         h = self._scroll.height()
         if h > 0:
             panel.setMaximumHeight(max(300, h // 2))
+
+    # -------------------------------------------------------- auto-occlude --
+    #
+    # One lecture (the document the current slide belongs to) per run, which
+    # is also one lecture credit. Boxes land the same way Detect's do: as
+    # ordinary boxes, one undo step on the slide in view, nothing saved
+    # until Create All Cards.
+
+    def _auto_scope_pages(self, doc: dict, scope: str) -> list:
+        start, count = doc["start"], doc["count"]
+        if scope == "current":
+            return [self._page_index]
+        if scope == "all":
+            return list(range(start, start + count))
+        return [i for i in range(start, start + count) if not self._boxes.get(i)]
+
+    def _auto_notes_text(self, doc: dict) -> str:
+        path = doc.get("notes_pdf") or ""
+        if not path or not os.path.exists(path):
+            return ""
+        parts, total = [], 0
+        try:
+            from .pdf_renderer import _import_pdfium
+            n = len(_import_pdfium().PdfDocument(path))
+        except Exception:
+            return ""
+        for i in range(n):
+            try:
+                t = get_page_text(path, i).strip()
+            except Exception:
+                continue
+            if t:
+                parts.append(t)
+                total += len(t)
+            if total > 12000:
+                break
+        return "\n\n".join(parts)[:12000]
+
+    def _open_auto_occlude(self):
+        if not self._pages:
+            return
+        self._save_current_boxes()
+        doc = self._doc_for_page(self._page_index)
+        if not doc:
+            return
+        counts = {k: len(self._auto_scope_pages(doc, k)) for k, _ in auto_occlude.SCOPES}
+        win = auto_occlude.AutoOccludeDialog(
+            self, bool(doc.get("notes_pdf")), counts, _PRIMARY_BTN_QSS)
+        if not win.exec() or not win.chosen:
+            return
+        s = win.chosen
+        idxs = self._auto_scope_pages(doc, s["scope"])
+        if len(idxs) > 150:
+            showWarning("Auto-occlude takes up to 150 slides at a time. "
+                        "Split the PDF, or run it on the slides without boxes.",
+                        parent=self, title="PDF Occlusion")
+            return
+        pages = [(i, doc["path"], i - doc["start"], self._page_image(i)) for i in idxs]
+        notes = self._auto_notes_text(doc) if s.get("use_notes") else ""
+        self._auto_replace = s["scope"] in ("all", "current")
+        self._auto_btn.setEnabled(False)
+        self._auto_run = auto_occlude.Run(self, pages, s, notes,
+                                          self._auto_page_boxes, self._auto_finished)
+        self._auto_run.start()
+
+    def _auto_page_boxes(self, idx, lines, w, h, cards, run):
+        old = self._boxes.get(idx, []) if idx != self._page_index else self._canvas.get_boxes()
+        keep = [] if self._auto_replace else old
+        next_group = max([b["group"] for b in keep if b.get("group") is not None] + [0]) + 1
+        boxes, made, dropped = auto_occlude.plan_to_boxes(cards, lines, w, h, next_group)
+        run.made += made
+        run.dropped += dropped
+        if idx == self._page_index:
+            remove = {b["id"] for b in old} if self._auto_replace else set()
+            self._canvas.replace_boxes(remove, boxes)
+            self._boxes[idx] = self._canvas.get_boxes()
+        elif boxes or self._auto_replace:
+            self._boxes[idx] = keep + boxes
+        self._refresh_count()
+
+    def _auto_finished(self, made, dropped, slides, complete):
+        self._auto_btn.setEnabled(bool(self._pages))
+        self._auto_run = None
+        self._update_controls()
+        self._refresh_count()
+        if slides:
+            note = f", {dropped} skipped" if dropped else ""
+            tooltip(f"Auto-occlude made {made} card{'s' if made != 1 else ''} "
+                    f"on {slides} slide{'s' if slides != 1 else ''}{note}", parent=self)
 
     def _open_cloze(self):
         """Ctrl+Shift+V — show or hide the composer panel."""
