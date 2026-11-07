@@ -700,6 +700,7 @@ class AutoOccludeDialog(QDialog):
         self.sign_btn.clicked.connect(self._sign)
         self._show_more(bool(s.get("show_more")))
         self.balance = None
+        self.free_pages = 50
         self._refresh()
         self._load_balance()
 
@@ -738,8 +739,15 @@ class AutoOccludeDialog(QDialog):
     def _load_balance(self):
         a = account()
         if not a.get("token"):
+            # how many pages a new account gets is the server's to say
+            in_background(lambda: call("/v1/health", timeout=10), self._got_health)
             return
         in_background(lambda: call("/v1/me", token=a["token"], timeout=20), self._got_balance)
+
+    def _got_health(self, res, err):
+        if not err and isinstance(res, dict) and res.get("free_pages"):
+            self.free_pages = int(res["free_pages"])
+            self._refresh()
 
     def _got_balance(self, me, err):
         if err:
@@ -772,7 +780,7 @@ class AutoOccludeDialog(QDialog):
                 tail = f", {plan} plan" + tail
             self.who.setText(f"{a.get('email') or 'Signed in'}{tail}")
         else:
-            self.who.setText("100 pages free")
+            self.who.setText(f"{self.free_pages} pages free")
         self.sign_btn.setText("Sign out" if signed else "Sign in")
         self.more_btn.setVisible(signed)
         n = self.slide_counts.get(self.scope.currentData(), 0)
