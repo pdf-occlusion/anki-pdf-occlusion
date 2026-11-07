@@ -84,7 +84,7 @@ The add-on never asks for or stores a GitHub password or token. It runs `git pus
 
 ## Contact
 
-- Ravi Bandaru: ravi.bandaru@northwestern.edu
+- Ravi Bandaru: ravi14.bandaru@gmail.com
 - Johanna Lee: johanna.lee@students.jefferson.edu
 
 ## License
