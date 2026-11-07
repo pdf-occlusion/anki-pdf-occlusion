@@ -723,7 +723,10 @@ class AutoOccludeDialog(QDialog):
         signed = bool(a.get("token"))
         if signed:
             left = self.balance.get("pages_left") if self.balance else None
-            tail = "" if left is None else f", {left} page{'s' if left != 1 else ''} left"
+            plan = (self.balance or {}).get("plan")
+            tail = "" if left is None else f", {left:,} page{'s' if left != 1 else ''} left"
+            if plan in ("monthly", "yearly"):
+                tail = f", {plan} plan" + tail
             self.who.setText(f"{a.get('email') or 'Signed in'}{tail}")
         else:
             self.who.setText("100 pages free")
