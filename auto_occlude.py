@@ -541,7 +541,7 @@ class AutoOccludeDialog(QDialog):
         self.who = QLabel()
         self.who.setWordWrap(True)
         self.sign_btn = QPushButton()
-        self.more_btn = QPushButton("Get more PDFs")
+        self.more_btn = QPushButton("Get more pages")
         self.more_btn.clicked.connect(lambda: webbrowser.open(f"{SITE}/pricing/"))
         acct.addWidget(self.who, stretch=1)
         acct.addWidget(self.more_btn)
@@ -653,15 +653,16 @@ class AutoOccludeDialog(QDialog):
         a = account()
         signed = bool(a.get("token"))
         if signed:
-            left = self.balance.get("lectures_left") if self.balance else None
-            tail = "" if left is None else f", {left} PDF{'s' if left != 1 else ''} left"
+            left = self.balance.get("pages_left") if self.balance else None
+            tail = "" if left is None else f", {left} page{'s' if left != 1 else ''} left"
             self.who.setText(f"{a.get('email') or 'Signed in'}{tail}")
         else:
             self.who.setText("Not signed in")
         self.sign_btn.setText("Sign out" if signed else "Sign in")
         n = self.slide_counts.get(self.scope.currentData(), 0)
         self.start_btn.setText(f"Auto-occlude {n} slide{'s' if n != 1 else ''}")
-        self.start_btn.setEnabled(signed and n > 0)
+        left = self.balance.get("pages_left") if (signed and self.balance) else None
+        self.start_btn.setEnabled(signed and n > 0 and (left is None or n <= left))
 
     def _gather(self) -> dict:
         s = {k: c.currentData() for k, c in self.combos.items()}
@@ -726,7 +727,7 @@ class Run:
         if err:
             self.progress.close()
             if isinstance(err, ServerError) and err.status == 402:
-                showWarning("No PDFs left on your account. Get more on the pricing page.",
+                showWarning(f"{err}. Get more on the pricing page.",
                             parent=self.dlg, title="PDF Occlusion")
                 webbrowser.open(f"{SITE}/pricing/")
             elif isinstance(err, ServerError) and err.status == 401:
