@@ -1,8 +1,9 @@
-# <img alt="pdf-occlusion-icon" src="icon.svg" height="60"> ‎ ‎ ‎PDF Occlusion
+# <img alt="PDF Occlusion logo" src="logo.svg" height="60" align="absmiddle"> ‎ ‎ ‎PDF Occlusion
 
 [![Anki](https://img.shields.io/badge/Anki-23.10%2B-836EAA?style=flat-square)](https://apps.ankiweb.net)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-836EAA?style=flat-square)](https://github.com/bananasrlowkeygood/anki-pdf-occlusion)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-836EAA?style=flat-square)](https://github.com/pdf-occlusion/anki-pdf-occlusion)
 [![License](https://img.shields.io/badge/license-MIT-836EAA?style=flat-square)](LICENSE)
+[![Website](https://img.shields.io/badge/website-pdf--occlusion.github.io-836EAA?style=flat-square)](https://pdf-occlusion.github.io)
 
 **PDF Occlusion** is an Anki add-on that creates image occlusion cards directly from PDF lecture slides. No more importing one image at a time. Open any PDF (or several at once), draw boxes over what you want to memorize, and generate cards in bulk. Built for studying from slide-heavy lectures.
 
@@ -63,6 +64,23 @@ Add-on code `783821131`, then restart Anki.
 | `add_editor_button` | `bool` | `true` | Show the toolbar button in the card editor |
 | `close_after_creating` | `bool` | `true` | Close the dialog once cards are created |
 | `pdf_hosting` | object | off | Publish the Notes / Slides PDFs so the card buttons open on your phone: `folder` you serve on the web (e.g. a GitHub Pages clone), its `base_url`, and `git_push` to commit and push them for you with your own git credentials. Off = cards keep local paths, desktop only. Published PDFs are public |
+
+## Open the PDFs on your phone
+
+Every card has **Slides** and **Notes** buttons that open the lecture's PDFs. Out of the box they point at the files on your computer, so they only work in desktop Anki and nothing leaves your machine. To make them work in AnkiMobile and AnkiWeb too, give the add-on a folder that is published on the web:
+
+1. Make a GitHub repository with GitHub Pages turned on, and clone it to your computer.
+2. In Anki, `Tools → Add-ons → PDF Occlusion → Config`, and fill in `pdf_hosting`:
+   ```json
+   "pdf_hosting": {
+       "folder": "~/Developer/my-pdfs/lectures",
+       "base_url": "https://YOUR-NAME.github.io/my-pdfs/lectures/",
+       "git_push": true
+   }
+   ```
+3. From then on, `Create All Cards` copies each PDF into that folder, commits it, pushes it, and gives the cards its web address.
+
+The add-on never asks for or stores a GitHub password or token. It runs `git push` in that folder, so it pushes with whatever login your clone already uses, and only to the repository you chose. Anyone with a PDF's exact address can open it, so only publish what you are allowed to share. Set `git_push` to `false` to commit and push yourself.
 
 ## Contact
 
