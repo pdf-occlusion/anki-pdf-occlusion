@@ -647,7 +647,10 @@ class AutoOccludeDialog(QDialog):
             self.balance = None
             self._refresh()
         else:
-            SignIn(self, lambda: (self._refresh(), self._load_balance())).start()
+            # kept on the window: Qt only holds a weak reference to the
+            # timer's slot, so an unreferenced SignIn would never poll
+            self._signin = SignIn(self, lambda: (self._refresh(), self._load_balance()))
+            self._signin.start()
 
     def _refresh(self):
         a = account()
