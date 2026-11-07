@@ -698,6 +698,43 @@ def _media_equals(col: Collection, fname: str, data: bytes) -> bool:
         return False
 
 
+def _shows_slide(col: Collection, fname: str, img: QImage) -> bool:
+    """Is the saved slide PNG `fname` still exactly the picture `img`?
+
+    Pixels, not bytes: the same picture can encode to different PNG bytes
+    across Qt versions, and that alone should not rewrite every card. Both
+    sides go to one format first, since the render and the file it was
+    saved to need not load back in the same one.
+    """
+    if not _media_exists(col, fname):
+        return False
+    saved = QImage(os.path.join(col.media.dir(), fname))
+    if saved.isNull() or saved.size() != img.size():
+        return False
+    fmt = QImage.Format.Format_ARGB32
+    return saved.convertToFormat(fmt) == img.convertToFormat(fmt)
+
+
+def _slide_media(col: Collection, img: QImage, fname: str,
+                 checked: Optional[set] = None) -> str:
+    """The media file for this slide: `fname` if it still shows exactly
+    this picture, otherwise a freshly saved one.
+
+    The slide is not fixed once its cards exist. Text written onto it later
+    (or anything else that changes its pixels) has to reach the cards, so a
+    PNG from a previous run is only reused after checking it is the same
+    picture. `checked` holds files already confirmed in this run, so a slide
+    behind several cards is only compared once.
+    """
+    if fname and checked is not None and fname in checked:
+        return fname
+    if not (fname and _shows_slide(col, fname, img)):
+        fname = _save_media(col, qimage_to_png_bytes(img), ".png")
+    if checked is not None:
+        checked.add(fname)
+    return fname
+
+
 # ------------------------------------------------- viewBox migration (v5)
 
 # Masks written before the viewBox fix are already in collection.media and
@@ -930,10 +967,9 @@ def create_occlusion_notes(
             slide_label = f"Slide {page_idx + 1}/{total_slides}" if total_slides else f"Slide {page_idx + 1}"
             header_prefix = f"{lecture_name} · {slide_label}" if lecture_name else slide_label
 
-            # reuse the slide PNG from a previous run when possible
-            img_fname = image_map.get(str(page_idx))
-            if not img_fname or not _media_exists(col, img_fname):
-                img_fname = _save_media(col, qimage_to_png_bytes(img), ".png")
+            # reuse the slide PNG from a previous run, but only if the slide
+            # still looks exactly like it (text may have been added since)
+            img_fname = _slide_media(col, img, image_map.get(str(page_idx), ""))
             new_image_map[str(page_idx)] = img_fname
 
             for key, region_boxes in _regions_for(page_idx, boxes):
@@ -1115,14 +1151,14 @@ def _cloze_body(
     image: Optional[QImage],
     image_fname: str,
     caption: str,
+    checked: Optional[set] = None,
 ) -> tuple:
     """(text html, extra html, image filename) for a cloze note."""
     parts = []
     if extra.strip():
         parts.append(_to_html(extra.strip()))
     if image is not None:
-        if not _media_exists(col, image_fname):
-            image_fname = _save_media(col, qimage_to_png_bytes(image), ".png")
+        image_fname = _slide_media(col, image, image_fname, checked)
         parts.append(f'<img src="{image_fname}">')
         if caption:
             parts.append(
@@ -1162,6 +1198,7 @@ def create_cloze_notes(
     """
     page_images = page_images or {}
     image_map = dict(image_map or {})
+    checked: set = set()
     created = updated = unchanged = 0
     out = []
 
@@ -1187,7 +1224,7 @@ def create_cloze_notes(
         caption = caption_for(page) if (caption_for and img is not None) else ""
         text_html, extra_html, fname = _cloze_body(
             col, card.get("text", ""), card.get("extra", ""),
-            img, image_map.get(str(page), ""), caption)
+            img, image_map.get(str(page), ""), caption, checked)
         if img is not None and fname:
             image_map[str(page)] = fname
 

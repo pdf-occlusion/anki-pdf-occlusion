@@ -701,6 +701,13 @@ class OcclusionCanvas(QWidget):
         self._editing = (kind, ident)
         self.update()
 
+    def commit_edit(self):
+        """Take whatever is still being typed, before the dialog reads the
+        slide's boxes and text. The editor only commits itself on losing
+        focus, and the slide buttons never take focus, so without this a
+        Next/Prev mid-sentence threw the text away."""
+        self._commit_edit()
+
     def _commit_edit(self):
         """Take what was typed. Empty means the thing goes away."""
         if not self._editing or self._editor is None:

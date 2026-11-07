@@ -1029,6 +1029,8 @@ class PDFOcclusionDialog(QDialog):
     # --------------------------------------------------------------- pages --
 
     def _save_current_boxes(self):
+        # while _page_index is still this slide, so the text lands on it
+        self._canvas.commit_edit()
         if self._canvas.has_image():
             self._boxes[self._page_index] = self._canvas.get_boxes()
 
