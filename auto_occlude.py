@@ -32,7 +32,7 @@ from aqt.utils import showWarning, tooltip
 
 from . import ocr
 
-DEFAULT_SERVER = "https://pdf-occlusion-api.ravi14-bandaru.workers.dev"
+DEFAULT_SERVER = "https://pdf-occlusion-api.pdf-occlusion.workers.dev"
 SITE = "https://pdf-occlusion.github.io"
 MAX_PIXELS = 1_150_000
 _ACCOUNT = os.path.join(os.path.dirname(__file__), "user_files", "account.json")
