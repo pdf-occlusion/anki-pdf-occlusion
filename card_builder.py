@@ -961,6 +961,10 @@ def create_occlusion_notes(
             if on_progress and on_progress(done, len(pages)) is False:
                 break
             processed.add(page_idx)
+            if not boxes:
+                # a slide whose boxes were all removed: nothing to write,
+                # its old notes just come back as stale below
+                continue
             W, H = img.width(), img.height()
             page_mode = page_modes.get(page_idx, page_modes.get(str(page_idx)))
 
@@ -1049,10 +1053,11 @@ def create_occlusion_notes(
                           {**image_map, **new_image_map})
         raise
 
-    # Pages not part of this run (no boxes left on them, or not reached
-    # before a cancel) keep their existing card links and slide images
+    # Pages not part of this run (not reached before a cancel, or left out
+    # by the caller) keep their existing card links and slide images
     # untouched — only a region missing from a page we actually processed
-    # counts as stale.
+    # counts as stale. A page passed in with no boxes is processed, so all
+    # of its notes are stale.
 
     def _page_of(key: str) -> int:
         try:

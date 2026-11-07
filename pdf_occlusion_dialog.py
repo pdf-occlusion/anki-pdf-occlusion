@@ -161,6 +161,17 @@ def _push_published(hosting: dict, urls: list) -> None:
                                  on_done)
 
 
+def _pages_with_notes(note_map) -> set:
+    """Local page indexes that cards in this note map were made from."""
+    pages = set()
+    for key in (note_map or {}):
+        try:
+            pages.add(int(str(key).split(":", 1)[0]))
+        except ValueError:
+            pass
+    return pages
+
+
 class PDFOcclusionDialog(QDialog):
     def __init__(self, parent=None, editor=None, note_id=None):
         super().__init__(parent)
@@ -1500,6 +1511,14 @@ class PDFOcclusionDialog(QDialog):
                 (i - start, self._page_image(i), self._boxes[i])
                 for i in range(start, start + count)
                 if self._boxes.get(i)
+            ]
+            # Slides whose boxes were all removed but still have cards go in
+            # empty, so their cards come up for deletion like any other
+            # removed box. Left out, they would stay on forever.
+            to_create += [
+                (local, self._pages[start + local], [])
+                for local in sorted(_pages_with_notes(doc.get("note_map")))
+                if 0 <= local < count and not self._boxes.get(start + local)
             ]
             cloze = []
             for i in range(start, start + count):
