@@ -736,6 +736,10 @@ class AutoOccludeDialog(QDialog):
         self.start_btn.setText(f"Auto-occlude {n} slide{'s' if n != 1 else ''}")
         left = self.balance.get("pages_left") if (signed and self.balance) else None
         self.start_btn.setEnabled(signed and n > 0 and (left is None or n <= left))
+        short = signed and left is not None and n > left
+        self.more_btn.setStyleSheet(
+            "QPushButton{color:#c0392b;border:1.5px solid #c0392b;border-radius:6px;"
+            "padding:5px 14px;font-weight:bold;}" if short else "")
 
     def _gather(self) -> dict:
         s = {k: c.currentData() for k, c in self.combos.items()}
