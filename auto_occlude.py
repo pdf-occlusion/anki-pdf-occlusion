@@ -436,9 +436,50 @@ class _Page:
         raise ValueError(f"unreadable target {t!r}")
 
 
+def _whole_lines(rects, lines):
+    """Text lines (not figure labels) that these rects cover completely."""
+    full = []
+    for i, ln in enumerate(lines):
+        if ln.get("src") == "ocr" or not ln["words"]:
+            continue
+        inside = [any(r[0] <= w["x"] + w["w"] / 2 <= r[0] + r[2] and r[1] <= w["y"] + w["h"] / 2 <= r[1] + r[3]
+                      for r in rects) for w in ln["words"]]
+        if all(inside):
+            full.append(i)
+    return full
+
+
+def _merge_bare_siblings(cards, lines):
+    """With every box covered at once, two cards that each hide a whole line of
+    a list look identical. Neighbouring cards like that become one card, which
+    asks for the list under its heading."""
+    bare = []
+    for k, (rects, _) in enumerate(cards):
+        full = _whole_lines(rects, lines)
+        if full and len(full) <= 2:
+            bare.append((k, full))
+    groups, cur = [], []
+    for k, full in bare:
+        if cur and full[0] - cur[-1][1][-1] <= 1 and abs(lines[full[0]]["words"][0]["x"] - lines[cur[-1][1][0]]["words"][0]["x"]) < 60:
+            cur.append((k, full))
+        else:
+            if len(cur) > 1:
+                groups.append(cur)
+            cur = [(k, full)]
+    if len(cur) > 1:
+        groups.append(cur)
+    drop = set()
+    for g in groups:
+        head = g[0][0]
+        for k, _ in g[1:]:
+            cards[head][0].extend(cards[k][0])
+            drop.add(k)
+    return [c for k, c in enumerate(cards) if k not in drop]
+
+
 def plan_to_boxes(cards: list, lines: list, W: int, H: int, next_group: int):
     """One slide's cards -> (boxes, cards made, cards dropped)."""
-    page, out, made, dropped = _Page(lines, W, H), [], 0, 0
+    page, resolved, dropped = _Page(lines, W, H), [], 0
     for card in cards or []:
         if isinstance(card, (str, list)) or not isinstance(card, dict) or "hide" not in card:
             card = {"hide": card}
@@ -457,6 +498,10 @@ def plan_to_boxes(cards: list, lines: list, W: int, H: int, next_group: int):
         if not rects:
             dropped += 1
             continue
+        resolved.append((rects, card.get("q", "")))
+    resolved = _merge_bare_siblings(resolved, lines)
+    out = []
+    for rects, _q in resolved:
         grouped = len(rects) > 1
         guid = uuid.uuid4().hex if grouped else None
         for r in rects:
@@ -464,9 +509,7 @@ def plan_to_boxes(cards: list, lines: list, W: int, H: int, next_group: int):
                         "group": next_group if grouped else None, "group_uid": guid,
                         "shape": "rect", "mode": None, "note": "", "id": uuid.uuid4().hex})
         next_group += grouped
-        made += 1
-    return out, made, dropped
-
+    return out, len(resolved), dropped
 
 # ------------------------------------------------------------------ sign in
 
