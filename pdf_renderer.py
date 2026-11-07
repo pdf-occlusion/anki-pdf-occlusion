@@ -51,7 +51,7 @@ def _import_pdfium():
             "PDF Occlusion: the bundled pypdfium2 library could not be loaded. "
             "If you just updated the add-on, restart Anki and try again. "
             "If the error persists, please report it at "
-            "https://github.com/bananasrlowkeygood/anki-pdf-occlusion/issues "
+            "https://github.com/pdf-occlusion/anki-pdf-occlusion/issues "
             "with your OS, Anki version, and this message.\n\n"
             f"Detected platform: {_platform_tag()} "
             f"(sys.platform={sys.platform}, machine={platform.machine()})\n"
