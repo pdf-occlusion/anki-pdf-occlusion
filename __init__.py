@@ -234,7 +234,10 @@ def _note_from_context(context):
             card = card()
         except Exception:
             card = None
-    if card is None and mw.reviewer is not None:
+    # only the reviewer itself: a card-layout screen opened from Browse mid
+    # review has no card of its own, and falling back there opened the PDF
+    # of the card under review rather than the one being edited
+    if card is None and mw.reviewer is not None and context is mw.reviewer:
         card = mw.reviewer.card
     if card is not None:
         try:
@@ -334,10 +337,14 @@ gui_hooks.state_shortcuts_will_change.append(_add_show_all_shortcut)
 # Strategy:
 #   1. notes_will_be_deleted fires BEFORE deletion — we read each note's fields
 #      and collect the pdf_occ_* filenames it references.
-#   2. We defer the actual file deletion with QTimer.singleShot so it runs
-#      after Anki has committed the deletion to the DB.
+#   2. We defer the cleanup with QTimer.singleShot so it runs after Anki has
+#      committed the deletion to the DB. The hook can fire on a worker thread
+#      (Browse and the reviewer delete through a CollectionOp), where a timer
+#      never fires, so the timer is started from the main thread.
 #   3. For each candidate file we do a fast collection search; if no remaining
-#      note references it, we delete it from disk.
+#      note references it, it goes to Anki's media trash. Not deleted outright:
+#      Edit > Undo can bring the notes back, and Check Media > Restore Deleted
+#      then brings their pictures back too.
 #
 # This handles the shared-image case correctly: if slide 5 produced 3 cards
 # they all reference the same pdf_occ_xxx.png — the file is only deleted once
@@ -373,14 +380,13 @@ def _on_notes_will_be_deleted(col, ids: Sequence) -> None:
 
     if candidates:
         _pending.update(candidates)
-        QTimer.singleShot(500, _do_cleanup)
+        mw.taskman.run_on_main(lambda: QTimer.singleShot(500, _do_cleanup))
 
 
 def _do_cleanup() -> None:
     if not _pending or not mw.col:
         return
 
-    media_dir = mw.col.media.dir()
     to_delete = set()
 
     for fname in list(_pending):
@@ -394,13 +400,11 @@ def _do_cleanup() -> None:
         if not still_used:
             to_delete.add(fname)
 
-    for fname in to_delete:
-        fpath = os.path.join(media_dir, fname)
+    if to_delete:
         try:
-            if os.path.exists(fpath):
-                os.remove(fpath)
+            mw.col.media.trash_files(sorted(to_delete))
         except Exception:
-            pass
+            pass  # left for Check Media
 
     _pending.difference_update(to_delete)
 

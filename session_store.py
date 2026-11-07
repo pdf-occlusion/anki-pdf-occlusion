@@ -38,7 +38,9 @@ def load(pdf_path: str) -> Optional[dict]:
     return data
 
 
-def save(pdf_path: str, data: dict) -> None:
+def save(pdf_path: str, data: dict) -> bool:
+    """Write the session. False if it could not be written — the caller
+    says so, since a lost note map means duplicate cards next time."""
     try:
         os.makedirs(_DIR, exist_ok=True)
         payload = dict(
@@ -52,7 +54,8 @@ def save(pdf_path: str, data: dict) -> None:
             json.dump(payload, f)
         os.replace(tmp, _path_for(pdf_path))
     except OSError:
-        pass  # never let a failed save break the dialog
+        return False  # never let a failed save break the dialog
+    return True
 
 
 def delete(pdf_path: str) -> None:
@@ -112,3 +115,7 @@ def list_sessions(limit: int = 8) -> list[dict]:
             out.append(data)
     out.sort(key=lambda d: d.get("saved_at", 0), reverse=True)
     return out[:limit]
+
+
+def folder() -> str:
+    return _DIR

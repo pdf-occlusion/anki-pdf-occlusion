@@ -189,6 +189,7 @@ class PDFOcclusionDialog(QDialog):
         # _cloze_stale holds the notes of records deleted since.
         self._cloze_cards: dict[int, list] = {}
         self._cloze_stale: list[int] = []
+        self._save_warned = False   # a failed session save is said once
         self._fly = None            # in-flight card animation, kept alive
         self._fitted = False        # is the current zoom a fit? (see _refit)
 
@@ -802,6 +803,9 @@ class PDFOcclusionDialog(QDialog):
         self._page_modes.clear()
         self._annots.clear()
         self._page_cache.clear()
+        # keyed by page index too, so they would land on the new PDF's slides
+        self._cloze_cards = {}
+        self._cloze_stale = []
 
         # the first recognition on a machine loads macOS's models and takes
         # ~30s; get that out of the way now rather than under a Detect click
@@ -888,6 +892,10 @@ class PDFOcclusionDialog(QDialog):
                 if 0 <= local < doc["count"] and a:
                     for entry in a:
                         entry.setdefault("id", uuid.uuid4().hex)
+                        # same pixel space as the boxes, so the same rescale
+                        if factor != 1.0:
+                            for f in ("x", "y", "w", "h"):
+                                entry[f] = int(entry[f] * factor)
                     self._annots[doc["start"] + local] = a
 
             for k, m in (s.get("page_modes") or {}).items():
@@ -935,7 +943,7 @@ class PDFOcclusionDialog(QDialog):
                     and not doc.get("note_map") and not doc.get("notes_pdf")):
                 session_store.delete(doc["path"])
                 continue
-            session_store.save(doc["path"], {
+            saved = session_store.save(doc["path"], {
                 "lecture": doc["lecture"],
                 "notes_pdf": doc.get("notes_pdf", ""),
                 "boxes": boxes,
@@ -951,6 +959,15 @@ class PDFOcclusionDialog(QDialog):
                 "page_count": count,
                 "deck": self._deck_combo.currentText().strip(),
             })
+            if not saved and not self._save_warned:
+                self._save_warned = True
+                showWarning(
+                    f"Couldn't save your work on "
+                    f"{os.path.basename(doc['path'])}.\n\n"
+                    "Until it saves, running Create All Cards again may make "
+                    "duplicate cards. Another program (antivirus, OneDrive) "
+                    f"may be locking this folder:\n{session_store.folder()}"
+                )
 
     def done(self, result: int):
         # runs on accept, reject (Esc) and window close — work is never lost
@@ -1696,7 +1713,7 @@ class PDFOcclusionDialog(QDialog):
             stale_nids += result["stale_nids"]
             offset += len(to_create)
 
-            if cloze and cloze_type is not None and not canceled is not None:
+            if cloze and cloze_type is not None and not canceled:
                 def caption_for(local, _doc=doc, _count=count):
                     label = f"Slide {local + 1}/{_count}"
                     lecture = (_doc.get("lecture") or "").strip()

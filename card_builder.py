@@ -1065,8 +1065,11 @@ def create_occlusion_notes(
             new_image_map[k] = fname
 
     stale_nids = []
+    # a note still behind some region is never stale, even if an older key
+    # (a recovered or hand-merged map) points at it too
+    live = set(new_note_map.values())
     for key, nid in note_map.items():
-        if key in new_note_map:
+        if key in new_note_map or nid in live:
             continue
         if _page_of(key) not in processed:
             new_note_map[key] = nid
