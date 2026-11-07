@@ -463,7 +463,7 @@ class PDFOcclusionDialog(QDialog):
         self._cloze_btn.clicked.connect(self._open_cloze)
 
         self._auto_btn = QPushButton("Auto-occlude")
-        self._auto_btn.setToolTip("Box a whole lecture with Claude, then look it over")
+        self._auto_btn.setToolTip("Box the whole PDF for you, then look it over")
         self._auto_btn.clicked.connect(self._open_auto_occlude)
 
         slide_mode_label = QLabel("This slide:")

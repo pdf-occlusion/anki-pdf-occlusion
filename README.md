@@ -20,7 +20,9 @@ Add-on code `783821131`, then restart Anki.
 
 ## Auto-occlude
 
-Press `Auto-occlude` and Claude makes a first draft of the whole lecture's boxes: diagram labels, the key phrase of each fact, table cells. You look them over, fix what you want, and create the cards as usual. Choose how it occludes in the same window: all labels or only the ones the lecture is about, key phrases or whole bullets, fewer or more cards, lists and tables, slides to skip, and your own instructions. Your first lecture is free; more are on the [pricing page](https://pdf-occlusion.github.io/pricing/). Only slide images and their text are sent, and nothing is kept.
+Press `Auto-occlude` and every label, term and key phrase in the PDF is boxed for you: lecture slides, atlases, textbook figures, vocabulary lists, maps, flowcharts. Look it over, change what you want, and create the cards as usual.
+
+The same window sets how it occludes: the subject; figure labels (all or only the important ones); bullet text; numbers and doses; bold or colored text; slide titles; pictures without labels; how many cards; lists, tables and flowcharts; repeated labels; term and meaning lists; pages to skip; the notes PDF; and your own instructions. Your choices are kept for every PDF. Your first PDF is free; more are on the [pricing page](https://pdf-occlusion.github.io/pricing/).
 
 ## Shortcuts
 

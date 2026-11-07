@@ -37,12 +37,23 @@ SITE = "https://pdf-occlusion.github.io"
 MAX_PIXELS = 1_150_000
 _ACCOUNT = os.path.join(os.path.dirname(__file__), "user_files", "account.json")
 
-# (setting, label, [(value, label), ...]) in the order the window shows them
-CHOICES = [
-    ("labels", "Diagram labels", [
+# (setting, label, [(value, label), ...]); the first choice is the default
+SUBJECT = ("subject", "Subject", [
+    ("auto", "Work it out"),
+    ("anatomy", "Anatomy or embryology"),
+    ("histology", "Histology or pathology"),
+    ("pharmacology", "Pharmacology"),
+    ("physiology", "Physiology or biochemistry"),
+    ("microbiology", "Microbiology"),
+    ("clinical", "Clinical medicine"),
+    ("language", "A language"),
+    ("other", "Something else"),
+])
+WHAT = [
+    ("labels", "Figure labels", [
         ("all", "All labels"),
-        ("relevant", "Only labels the lecture is about"),
-        ("none", "None"),
+        ("relevant", "Only the important ones"),
+        ("none", "Leave alone"),
     ]),
     ("text", "Bullet text", [
         ("key_phrase", "Key phrase of each fact"),
@@ -51,9 +62,28 @@ CHOICES = [
         ("skip_on_figures", "Only on slides without a figure"),
         ("none", "Leave alone"),
     ]),
+    ("numbers", "Numbers and doses", [
+        ("key", "Key values only"),
+        ("all", "Every number"),
+        ("none", "Leave alone"),
+    ]),
+    ("emphasis", "Bold or colored text", [
+        ("first", "Always box it"),
+        ("same", "Like any other text"),
+    ]),
+    ("titles", "Slide titles", [
+        ("never", "Leave alone"),
+        ("when_answer", "Box when it is the answer"),
+    ]),
+    ("pictures", "Pictures without labels", [
+        ("name", "Box the caption"),
+        ("skip", "Leave alone"),
+    ]),
+]
+HOW = [
     ("density", "Cards", [
-        ("fewer", "Fewer, only the most testable"),
         ("balanced", "Balanced"),
+        ("fewer", "Fewer, only the most testable"),
         ("more", "More, every testable fact"),
     ]),
     ("lists", "Lists", [
@@ -66,7 +96,22 @@ CHOICES = [
         ("per_column", "One card per column"),
         ("skip", "Leave alone"),
     ]),
+    ("flows", "Flowcharts and pathways", [
+        ("per_step", "One card per step"),
+        ("whole", "One card for the chain"),
+        ("skip", "Leave alone"),
+    ]),
+    ("repeats", "Same label twice", [
+        ("together", "One card"),
+        ("separate", "Separate cards"),
+    ]),
+    ("pairs", "Term and meaning lists", [
+        ("meaning", "Hide the meaning"),
+        ("term", "Hide the term"),
+        ("both", "Card both ways"),
+    ]),
 ]
+CHOICES = [SUBJECT] + WHAT + HOW
 SKIPS = [
     ("title", "Title slides"),
     ("objectives", "Objectives and outlines"),
@@ -81,8 +126,7 @@ SCOPES = [
     ("all", "Every slide, replacing its boxes"),
 ]
 DEFAULTS = {
-    "labels": "all", "text": "key_phrase", "density": "balanced",
-    "lists": "one_card", "tables": "per_cell",
+    **{key: opts[0][0] for key, _, opts in CHOICES},
     "skip": [k for k, _ in SKIPS], "custom": "", "use_notes": True, "scope": "empty",
 }
 
@@ -486,7 +530,7 @@ class AutoOccludeDialog(QDialog):
     def __init__(self, parent, has_notes: bool, slide_counts: dict, primary_qss: str):
         super().__init__(parent)
         self.setWindowTitle("Auto-occlude")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(780)
         self.slide_counts = slide_counts
         self.chosen = None
         s = settings()
@@ -497,31 +541,40 @@ class AutoOccludeDialog(QDialog):
         self.who = QLabel()
         self.who.setWordWrap(True)
         self.sign_btn = QPushButton()
-        self.more_btn = QPushButton("Get more lectures")
+        self.more_btn = QPushButton("Get more PDFs")
         self.more_btn.clicked.connect(lambda: webbrowser.open(f"{SITE}/pricing/"))
         acct.addWidget(self.who, stretch=1)
         acct.addWidget(self.more_btn)
         acct.addWidget(self.sign_btn)
         root.addLayout(acct)
 
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        top = QFormLayout()
+        top.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.scope = QComboBox()
         for value, label in SCOPES:
             self.scope.addItem(label, value)
-        self.scope.setCurrentIndex(max(0, [v for v, _ in SCOPES].index(s["scope"]) if s["scope"] in dict(SCOPES) else 0))
+        self.scope.setCurrentIndex([v for v, _ in SCOPES].index(s["scope"]) if s["scope"] in dict(SCOPES) else 0)
         self.scope.currentIndexChanged.connect(self._refresh)
-        form.addRow("Slides", self.scope)
+        top.addRow("Slides", self.scope)
         self.combos = {}
-        for key, label, opts in CHOICES:
-            c = QComboBox()
-            for value, text in opts:
-                c.addItem(text, value)
-            values = [v for v, _ in opts]
-            c.setCurrentIndex(values.index(s[key]) if s[key] in values else 0)
-            self.combos[key] = c
-            form.addRow(label, c)
-        root.addLayout(form)
+        top.addRow(SUBJECT[1], self._combo(SUBJECT, s))
+        root.addLayout(top)
+
+        cols = QHBoxLayout()
+        cols.setSpacing(24)
+        for title, group in (("What to box", WHAT), ("How to card it", HOW)):
+            col = QVBoxLayout()
+            head = QLabel(title)
+            head.setStyleSheet("font-weight:bold; margin-top:8px;")
+            col.addWidget(head)
+            form = QFormLayout()
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            form.setVerticalSpacing(6)
+            for item in group:
+                form.addRow(item[1], self._combo(item, s))
+            col.addLayout(form)
+            cols.addLayout(col, stretch=1)
+        root.addLayout(cols)
 
         skip_title = QLabel("Skip")
         skip_title.setStyleSheet("font-weight:bold; margin-top:6px;")
@@ -535,7 +588,7 @@ class AutoOccludeDialog(QDialog):
             grid.addWidget(cb, i // 2, i % 2)
         root.addLayout(grid)
 
-        self.notes = QCheckBox("Use the lecture notes")
+        self.notes = QCheckBox("Use the notes PDF")
         self.notes.setChecked(bool(s["use_notes"]) and has_notes)
         self.notes.setEnabled(has_notes)
         root.addSpacing(4)
@@ -558,9 +611,20 @@ class AutoOccludeDialog(QDialog):
         root.addWidget(buttons)
 
         self.sign_btn.clicked.connect(self._sign)
+        self.adjustSize()
         self.balance = None
         self._refresh()
         self._load_balance()
+
+    def _combo(self, item, s) -> QComboBox:
+        key, _, opts = item
+        c = QComboBox()
+        for value, text in opts:
+            c.addItem(text, value)
+        values = [v for v, _ in opts]
+        c.setCurrentIndex(values.index(s[key]) if s[key] in values else 0)
+        self.combos[key] = c
+        return c
 
     def _load_balance(self):
         a = account()
@@ -590,7 +654,7 @@ class AutoOccludeDialog(QDialog):
         signed = bool(a.get("token"))
         if signed:
             left = self.balance.get("lectures_left") if self.balance else None
-            tail = "" if left is None else f", {left} lecture{'s' if left != 1 else ''} left"
+            tail = "" if left is None else f", {left} PDF{'s' if left != 1 else ''} left"
             self.who.setText(f"{a.get('email') or 'Signed in'}{tail}")
         else:
             self.who.setText("Not signed in")
@@ -662,7 +726,7 @@ class Run:
         if err:
             self.progress.close()
             if isinstance(err, ServerError) and err.status == 402:
-                showWarning("No lectures left on your account. Get more on the pricing page.",
+                showWarning("No PDFs left on your account. Get more on the pricing page.",
                             parent=self.dlg, title="PDF Occlusion")
                 webbrowser.open(f"{SITE}/pricing/")
             elif isinstance(err, ServerError) and err.status == 401:
@@ -681,7 +745,7 @@ class Run:
             return self._finish()
         chunk = self.queue[0]
         body = {"slides": [c[4] for c in chunk],
-                "settings": {k: self.s[k] for k in ("labels", "text", "density", "lists", "tables", "skip", "custom")}}
+                "settings": {k: self.s[k] for k in [c[0] for c in CHOICES] + ["skip", "custom"]}}
         if self.s.get("use_notes") and self.notes:
             body["notes"] = self.notes
 
