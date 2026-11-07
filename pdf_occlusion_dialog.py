@@ -86,6 +86,21 @@ _DIALOG_QSS = (
     "border-color:#836EAA;}"
 )
 
+# Auto-occlude sits beside Open PDF, outlined in purple: the next step after
+# opening a lecture, a step down from the solid primaries, and unlike a
+# toggled tool it never looks "on".
+def _auto_btn_qss() -> str:
+    a = _accent_color()
+    return (
+        f"QPushButton{{padding:5px 16px;border-radius:6px;font-weight:bold;color:{a};"
+        f"border:1.5px solid {a};background:transparent;}}"
+        "QPushButton:hover{background:rgba(131,110,170,0.16);}"
+        "QPushButton:pressed{background:rgba(131,110,170,0.28);}"
+        "QPushButton:disabled{color:rgba(127,127,127,0.45);"
+        "border-color:rgba(127,127,127,0.18);background:transparent;}"
+    )
+
+
 # The notes-PDF attach control: a quiet split button matching the secondary
 # QPushButtons above (QSS selectors are per-class, so it needs its own copy).
 # Its caret is grey rather than the white one on the purple Open PDF button.
@@ -465,6 +480,7 @@ class PDFOcclusionDialog(QDialog):
         self._auto_btn = QPushButton("Auto-occlude")
         self._auto_btn.setToolTip("Box the whole PDF for you, then look it over")
         self._auto_btn.clicked.connect(self._open_auto_occlude)
+        self._auto_btn.setStyleSheet(_auto_btn_qss())
 
         slide_mode_label = QLabel("This slide:")
         slide_mode_label.setStyleSheet("color:rgba(127,127,127,0.9);")
@@ -477,10 +493,9 @@ class PDFOcclusionDialog(QDialog):
         row3.addWidget(self._draw_btn)
         row3.addWidget(self._select_btn)
         row3.addWidget(self._text_btn)
-        row3.addSpacing(10)
         row3.addWidget(self._detect_btn)
         row3.addWidget(self._cloze_btn)
-        row3.addWidget(self._auto_btn)
+        row1.insertWidget(1, self._auto_btn)
         row3.addSpacing(10)
         self._detect_hint = QLabel("")
         self._detect_hint.setStyleSheet(

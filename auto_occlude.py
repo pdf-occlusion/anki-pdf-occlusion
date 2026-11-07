@@ -26,7 +26,8 @@ from aqt import mw
 from aqt.qt import (
     QApplication, QBuffer, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QGridLayout, QHBoxLayout, QIODevice, QImage, QLabel,
-    QPlainTextEdit, QProgressDialog, QPushButton, QTimer, QVBoxLayout, Qt,
+    QButtonGroup, QPlainTextEdit, QProgressDialog, QPushButton, QTimer, QVBoxLayout,
+    QWidget, Qt,
 )
 from aqt.utils import showWarning, tooltip
 
@@ -128,7 +129,14 @@ SCOPES = [
 DEFAULTS = {
     **{key: opts[0][0] for key, _, opts in CHOICES},
     "skip": [k for k, _ in SKIPS], "custom": "", "use_notes": True, "scope": "empty",
+    "show_more": False,
 }
+# the one choice most people make; each sets a few of the detailed settings
+PRESETS = [
+    ("essentials", "Essentials", {"density": "fewer", "labels": "relevant", "numbers": "key"}),
+    ("balanced", "Balanced", {"density": "balanced", "labels": "all", "numbers": "key"}),
+    ("everything", "Everything", {"density": "more", "labels": "all", "numbers": "all"}),
+]
 
 
 # ------------------------------------------------------------------ config
@@ -530,7 +538,7 @@ class AutoOccludeDialog(QDialog):
     def __init__(self, parent, has_notes: bool, slide_counts: dict, primary_qss: str):
         super().__init__(parent)
         self.setWindowTitle("Auto-occlude")
-        self.setMinimumWidth(780)
+        self.setMinimumWidth(520)
         self.slide_counts = slide_counts
         self.chosen = None
         s = settings()
@@ -556,9 +564,46 @@ class AutoOccludeDialog(QDialog):
         self.scope.setCurrentIndex([v for v, _ in SCOPES].index(s["scope"]) if s["scope"] in dict(SCOPES) else 0)
         self.scope.currentIndexChanged.connect(self._refresh)
         top.addRow("Slides", self.scope)
-        self.combos = {}
-        top.addRow(SUBJECT[1], self._combo(SUBJECT, s))
+
+        # how much to box: three buttons, side by side
+        seg = QHBoxLayout()
+        seg.setSpacing(0)
+        self.preset_group = QButtonGroup(self)
+        self.preset_group.setExclusive(True)
+        self.preset_btns = {}
+        for i, (key, label, _) in enumerate(PRESETS):
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setMinimumWidth(110)
+            self.preset_group.addButton(b)
+            self.preset_btns[key] = b
+            b.clicked.connect(lambda _=False, k=key: self._apply_preset(k))
+            seg.addWidget(b)
+        seg.addStretch()
+        top.addRow("How much", seg)
+
+        self.notes = QCheckBox("Use the notes PDF")
+        self.notes.setChecked(bool(s["use_notes"]) and has_notes)
+        self.notes.setVisible(has_notes)
+        if has_notes:
+            top.addRow("", self.notes)
         root.addLayout(top)
+
+        # everything else, folded away until asked for
+        self.more_toggle = QPushButton()
+        self.more_toggle.setFlat(True)
+        self.more_toggle.setStyleSheet("QPushButton{text-align:left; padding:4px 0; color:palette(link);}")
+        self.more_toggle.clicked.connect(lambda: self._show_more(not self.more.isVisible()))
+        root.addWidget(self.more_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self.more = QWidget()
+        more = QVBoxLayout(self.more)
+        more.setContentsMargins(0, 0, 0, 0)
+        self.combos = {}
+        sub = QFormLayout()
+        sub.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        sub.addRow(SUBJECT[1], self._combo(SUBJECT, s))
+        more.addLayout(sub)
 
         cols = QHBoxLayout()
         cols.setSpacing(24)
@@ -574,11 +619,11 @@ class AutoOccludeDialog(QDialog):
                 form.addRow(item[1], self._combo(item, s))
             col.addLayout(form)
             cols.addLayout(col, stretch=1)
-        root.addLayout(cols)
+        more.addLayout(cols)
 
         skip_title = QLabel("Skip")
         skip_title.setStyleSheet("font-weight:bold; margin-top:6px;")
-        root.addWidget(skip_title)
+        more.addWidget(skip_title)
         grid = QGridLayout()
         self.skips = {}
         for i, (key, label) in enumerate(SKIPS):
@@ -586,21 +631,20 @@ class AutoOccludeDialog(QDialog):
             cb.setChecked(key in s["skip"])
             self.skips[key] = cb
             grid.addWidget(cb, i // 2, i % 2)
-        root.addLayout(grid)
-
-        self.notes = QCheckBox("Use the notes PDF")
-        self.notes.setChecked(bool(s["use_notes"]) and has_notes)
-        self.notes.setEnabled(has_notes)
-        root.addSpacing(4)
-        root.addWidget(self.notes)
+        more.addLayout(grid)
 
         custom_title = QLabel("Your own instructions")
         custom_title.setStyleSheet("font-weight:bold; margin-top:6px;")
-        root.addWidget(custom_title)
+        more.addWidget(custom_title)
         self.custom = QPlainTextEdit()
         self.custom.setPlainText(s["custom"])
         self.custom.setFixedHeight(70)
-        root.addWidget(self.custom)
+        more.addWidget(self.custom)
+        root.addWidget(self.more)
+
+        for c in self.combos.values():
+            c.currentIndexChanged.connect(self._sync_preset)
+        self._sync_preset()
 
         buttons = QDialogButtonBox()
         self.start_btn = buttons.addButton("Start", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -611,10 +655,32 @@ class AutoOccludeDialog(QDialog):
         root.addWidget(buttons)
 
         self.sign_btn.clicked.connect(self._sign)
-        self.adjustSize()
+        self._show_more(bool(s.get("show_more")))
         self.balance = None
         self._refresh()
         self._load_balance()
+
+    def _apply_preset(self, key):
+        values = dict((k, v) for k, _, v in PRESETS)[key]
+        for setting, value in values.items():
+            c = self.combos[setting]
+            c.setCurrentIndex(c.findData(value))
+        self._sync_preset()
+
+    def _sync_preset(self):
+        """Light up the preset the detailed settings match, or none."""
+        current = {k: c.currentData() for k, c in self.combos.items()}
+        match = next((k for k, _, v in PRESETS if all(current[a] == b for a, b in v.items())), None)
+        self.preset_group.setExclusive(False)
+        for k, b in self.preset_btns.items():
+            b.setChecked(k == match)
+        self.preset_group.setExclusive(True)
+
+    def _show_more(self, on: bool):
+        self.more.setVisible(on)
+        self.more_toggle.setText("Fewer settings" if on else "More settings")
+        self.setMinimumWidth(780 if on else 520)
+        self.adjustSize()
 
     def _combo(self, item, s) -> QComboBox:
         key, _, opts = item
@@ -673,6 +739,7 @@ class AutoOccludeDialog(QDialog):
         s["custom"] = self.custom.toPlainText().strip()[:600]
         s["use_notes"] = self.notes.isChecked()
         s["scope"] = self.scope.currentData()
+        s["show_more"] = self.more.isVisible()
         return s
 
     def _accept(self):
