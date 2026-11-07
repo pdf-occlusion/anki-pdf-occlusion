@@ -40,7 +40,7 @@ _ACCOUNT = os.path.join(os.path.dirname(__file__), "user_files", "account.json")
 
 # (setting, label, [(value, label), ...]); the first choice is the default
 SUBJECT = ("subject", "Subject", [
-    ("auto", "Work it out"),
+    ("auto", "Detect automatically"),
     ("anatomy", "Anatomy or embryology"),
     ("histology", "Histology or pathology"),
     ("pharmacology", "Pharmacology"),
@@ -52,64 +52,64 @@ SUBJECT = ("subject", "Subject", [
 ])
 WHAT = [
     ("labels", "Figure labels", [
-        ("all", "All labels"),
-        ("relevant", "Only the important ones"),
-        ("none", "Leave alone"),
+        ("all", "Every label"),
+        ("relevant", "Only key labels"),
+        ("none", "Don't box labels"),
     ]),
     ("text", "Bullet text", [
-        ("key_phrase", "Key phrase of each fact"),
-        ("whole_bullet", "Whole bullet, keep its subject"),
-        ("block", "Sub-bullets as one block"),
-        ("skip_on_figures", "Only on slides without a figure"),
-        ("none", "Leave alone"),
+        ("key_phrase", "Box the key phrase"),
+        ("whole_bullet", "Box all but the subject"),
+        ("block", "Box sub-bullets as one block"),
+        ("skip_on_figures", "Only on slides with no figure"),
+        ("none", "Don't box bullets"),
     ]),
     ("numbers", "Numbers and doses", [
-        ("key", "Key values only"),
+        ("key", "Only important numbers"),
         ("all", "Every number"),
-        ("none", "Leave alone"),
+        ("none", "Don't box numbers"),
     ]),
     ("emphasis", "Bold or colored text", [
-        ("first", "Always box it"),
-        ("same", "Like any other text"),
+        ("first", "Box it first"),
+        ("same", "Treat like other text"),
     ]),
     ("titles", "Slide titles", [
-        ("never", "Leave alone"),
-        ("when_answer", "Box when it is the answer"),
+        ("never", "Don't box titles"),
+        ("when_answer", "Box when the title is the answer"),
     ]),
     ("pictures", "Pictures without labels", [
-        ("name", "Box the caption"),
-        ("skip", "Leave alone"),
+        ("name", "Box the caption that names it"),
+        ("skip", "Don't box captions"),
     ]),
 ]
 HOW = [
     ("density", "Cards", [
         ("balanced", "Balanced"),
-        ("fewer", "Fewer, only the most testable"),
-        ("more", "More, every testable fact"),
+        ("fewer", "Fewer (most testable only)"),
+        ("more", "More (every testable fact)"),
     ]),
     ("lists", "Lists", [
-        ("one_card", "One card for the whole list"),
         ("per_item", "One card per item"),
+        ("one_card", "One card for the whole list"),
     ]),
     ("tables", "Tables", [
         ("per_cell", "One card per cell"),
         ("per_row", "One card per row"),
         ("per_column", "One card per column"),
-        ("skip", "Leave alone"),
+        ("skip", "Don't box tables"),
     ]),
     ("flows", "Flowcharts and pathways", [
         ("per_step", "One card per step"),
-        ("whole", "One card for the chain"),
-        ("skip", "Leave alone"),
+        ("whole", "One card for the whole chain"),
+        ("skip", "Don't box flowcharts"),
     ]),
-    ("repeats", "Same label twice", [
-        ("together", "One card"),
-        ("separate", "Separate cards"),
+    ("repeats", "Label shown twice", [
+        ("together", "One card for both"),
+        ("separate", "A card for each"),
     ]),
     ("pairs", "Term and meaning lists", [
         ("meaning", "Hide the meaning"),
         ("term", "Hide the term"),
-        ("both", "Card both ways"),
+        ("both", "Both, as separate cards"),
     ]),
 ]
 CHOICES = [SUBJECT] + WHAT + HOW
@@ -122,9 +122,9 @@ SKIPS = [
     ("duplicates", "Repeated slides and builds"),
 ]
 SCOPES = [
-    ("empty", "Slides without boxes"),
-    ("current", "This slide"),
-    ("all", "Every slide, replacing its boxes"),
+    ("empty", "Only slides I haven't boxed"),
+    ("current", "Only this slide"),
+    ("all", "All slides (clears my boxes)"),
 ]
 DEFAULTS = {
     **{key: opts[0][0] for key, _, opts in CHOICES},
@@ -580,7 +580,7 @@ class AutoOccludeDialog(QDialog):
             b.clicked.connect(lambda _=False, k=key: self._apply_preset(k))
             seg.addWidget(b)
         seg.addStretch()
-        top.addRow("How much", seg)
+        top.addRow("How much to box", seg)
 
         self.notes = QCheckBox("Use the notes PDF")
         self.notes.setChecked(bool(s["use_notes"]) and has_notes)
@@ -607,7 +607,7 @@ class AutoOccludeDialog(QDialog):
 
         cols = QHBoxLayout()
         cols.setSpacing(24)
-        for title, group in (("What to box", WHAT), ("How to card it", HOW)):
+        for title, group in (("What to box", WHAT), ("How to make cards", HOW)):
             col = QVBoxLayout()
             head = QLabel(title)
             head.setStyleSheet("font-weight:bold; margin-top:8px;")
