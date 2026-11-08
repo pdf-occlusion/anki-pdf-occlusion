@@ -22,7 +22,7 @@ Add-on code `783821131`, then restart Anki.
 
 Press `Auto-occlude` and every label, term and key phrase in the PDF is boxed for you: lecture slides, atlases, textbook figures, vocabulary lists, maps, flowcharts. Look it over, change what you want, and create the cards as usual.
 
-The same window sets how it occludes: the subject; figure labels (all or only the important ones); bullet text; numbers and doses; bold or colored text; slide titles; pictures without labels; how many cards; lists, tables and flowcharts; repeated labels; term and meaning lists; pages to skip; the notes PDF; and your own instructions. Your choices are kept for every PDF. Your first 50 pages are free; more are on the [pricing page](https://pdf-occlusion.github.io/pricing/).
+It reads the whole PDF first, works out what kind of document it is and what each page teaches, and boxes accordingly, so the same button works for lecture slides, an atlas or a phrase list. In the window, choose how many cards (Fewer, Balanced or More), whether to use the notes PDF, and write your own instructions ("I'm studying for Step 1; skip stain names"), which are kept for every PDF. More settings: figure labels, bullet text, tables, and skipping title and reference slides. Your first 50 pages are free; more are on the [pricing page](https://pdf-occlusion.github.io/pricing/).
 
 ## Shortcuts
 
