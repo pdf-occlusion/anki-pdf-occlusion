@@ -1,4 +1,4 @@
-"""Auto-occlude: a first draft of a lecture's boxes, placed by Claude.
+"""Auto-occlude: a first draft of a lecture's boxes, placed by the server.
 
 The add-on does the slide work here: it reads each slide's words (the PDF's
 text layer, plus text recognition on the picture for figure labels), sends
