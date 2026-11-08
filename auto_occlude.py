@@ -10,9 +10,13 @@ The server holds the model key and counts lecture credits; this file only
 ever holds the student's own sign-in key, in user_files/account.json.
 """
 import base64
+import functools
+import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import unicodedata
@@ -194,12 +198,45 @@ class ServerError(Exception):
         self.data = data or {}
 
 
+@functools.lru_cache(maxsize=1)
+def device_id() -> str:
+    """A one-way hash of this computer's hardware id. The server counts free
+    pages per computer with it; the id itself never leaves this machine."""
+    raw = ""
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                                 capture_output=True, text=True, timeout=5).stdout
+            m = re.search(r'"IOPlatformUUID" = "([^"]+)"', out)
+            raw = m.group(1) if m else ""
+        elif sys.platform == "win32":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", 0,
+                                winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as k:
+                raw = str(winreg.QueryValueEx(k, "MachineGuid")[0])
+        else:
+            for p in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+                try:
+                    with open(p) as f:
+                        raw = f.read().strip()
+                except OSError:
+                    continue
+                if raw:
+                    break
+    except Exception:       # noqa: BLE001 - fall back to the network card below
+        raw = ""
+    if not raw:
+        raw = f"node:{uuid.getnode():012x}"
+    return hashlib.sha256(f"pdf-occlusion-device:{raw}".encode()).hexdigest()
+
+
 def call(path: str, body: Optional[dict] = None, token: Optional[str] = None,
          timeout: float = 120.0) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(server() + path, data=data, method="POST" if data is not None else "GET")
     req.add_header("content-type", "application/json")
     req.add_header("user-agent", "pdf-occlusion-addon")
+    req.add_header("x-device", device_id())
     if token:
         req.add_header("authorization", f"Bearer {token}")
     try:
