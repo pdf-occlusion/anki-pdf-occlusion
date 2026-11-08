@@ -383,10 +383,13 @@ def _stacks(rects):
     return out
 
 
-def _pad(r, W, H):
+def _pad(r, W, H, ocr=False):
     pad = max(3.0, 0.15 * r[3]) if r[3] < 120 else 6.0
-    x0, y0 = max(0, r[0] - pad), max(0, r[1] - pad)
-    x1, y1 = min(W, r[0] + r[2] + pad), min(H, r[1] + r[3] + pad)
+    # text recognition places words less exactly than a PDF's own text
+    # layer, mostly at their ends, so its boxes get more room sideways
+    side = max(pad, 0.25 * min(r[3], 60)) if ocr else pad
+    x0, y0 = max(0, r[0] - side), max(0, r[1] - pad)
+    x1, y1 = min(W, r[0] + r[2] + side), min(H, r[1] + r[3] + pad)
     return [int(round(x0)), int(round(y0)), int(round(x1 - x0)), int(round(y1 - y0))]
 
 
@@ -432,6 +435,18 @@ class _Page:
         for w, lid in self.seq[start:start + len(toks)]:
             by_line.setdefault(lid, []).append([w["x"], w["y"], w["w"], w["h"]])
         return [_union(r) for r in by_line.values()]
+
+    def uses_ocr(self, t):
+        """Does a target land on recognised text (as opposed to the text layer)?"""
+        try:
+            if isinstance(t, str) and re.fullmatch(r"L\d+(\s*[-,]\s*L?\d+)*", t.strip()):
+                return any(self.lines[i].get("src") == "ocr" for i in self._line_ids(t))
+            if isinstance(t, dict) and "lines" in t:
+                return any(self.lines[i].get("src") == "ocr" for i in self._line_ids(t["lines"]))
+        except (ValueError, KeyError):
+            return False
+        return any(ln.get("src") == "ocr" for ln in self.lines.values()) and not any(
+            ln.get("src") == "text" for ln in self.lines.values())
 
     def resolve(self, t):
         """One target -> (rects, already padded)."""
@@ -492,6 +507,39 @@ def _merge_bare_siblings(cards, lines):
     return [c for k, c in enumerate(cards) if k not in drop]
 
 
+def _separate(cards):
+    """Padding can make the boxes of two neighbouring labels overlap, and an
+    overlap clips the edge of the other card's words. Split each such overlap
+    down the middle, across whichever axis it is thinner on."""
+    boxes = [(k, r) for k, (rects, _q) in enumerate(cards) for r in rects]
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            (ki, a), (kj, b) = boxes[i], boxes[j]
+            if ki == kj:
+                continue
+            ox = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+            oy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+            if ox <= 0 or oy <= 0:
+                continue
+            # only padding-sized overlaps: a real overlap is a choice
+            if ox > 0.5 * min(a[2], b[2]) and oy > 0.5 * min(a[3], b[3]):
+                continue
+            if oy <= ox:
+                top, bot = (a, b) if a[1] < b[1] else (b, a)
+                mid = (top[1] + top[3] + bot[1]) / 2
+                cut = top[1] + top[3] - mid
+                top[3] = int(round(top[3] - cut))
+                bot[3] = int(round(bot[3] - (mid - bot[1])))
+                bot[1] = int(round(mid))
+            else:
+                left, right = (a, b) if a[0] < b[0] else (b, a)
+                mid = (left[0] + left[2] + right[0]) / 2
+                cut = left[0] + left[2] - mid
+                left[2] = int(round(left[2] - cut))
+                right[2] = int(round(right[2] - (mid - right[0])))
+                right[0] = int(round(mid))
+
+
 def plan_to_boxes(cards: list, lines: list, W: int, H: int, next_group: int):
     """One slide's cards -> (boxes, cards made, cards dropped)."""
     page, resolved, dropped = _Page(lines, W, H), [], 0
@@ -501,20 +549,28 @@ def plan_to_boxes(cards: list, lines: list, W: int, H: int, next_group: int):
         targets = card.get("hide")
         if isinstance(targets, (str, dict)):
             targets = [targets]
-        rects = []
+        rects, raw, ocr = [], [], False
         try:
             for t in targets or []:
                 got, padded = page.resolve(t)
-                rects += [r if padded else _pad(r, W, H) for r in got]
+                if padded:
+                    rects += got
+                else:
+                    raw += got
+                    ocr = ocr or page.uses_ocr(t)
         except (ValueError, KeyError, TypeError):
             dropped += 1
             continue
+        # the lines of one multi-line label, however they were named: one
+        # box, not one per line
+        rects += [_pad(r, W, H, ocr) for r in (_stacks(raw) if len(raw) > 1 else raw)]
         rects = [r for r in rects if r[2] > 2 and r[3] > 2]
         if not rects:
             dropped += 1
             continue
         resolved.append((rects, card.get("q", "")))
     resolved = _merge_bare_siblings(resolved, lines)
+    _separate(resolved)
     out = []
     for rects, _q in resolved:
         grouped = len(rects) > 1
