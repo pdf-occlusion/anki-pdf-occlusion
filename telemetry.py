@@ -6,10 +6,13 @@ Anki and OS versions, the one-way computer id from auto_occlude.device_id,
 and the Auto-occlude sign-in when there is one.
 Never sent: slide images, file names, card text or anything typed.
 
-Events wait in memory and go to the PDF Occlusion server once a minute and
-when the profile closes. Set "usage_stats" to false in the add-on's config to
-send nothing.
+Events wait in memory and go to the PDF Occlusion server once a minute.
+Whatever is still unsent when the profile closes is written to
+user_files/stats_pending.json, never sent then, so quitting never waits on
+the network, and goes out on the next start that has a connection. Set
+"usage_stats" to false in the add-on's config to send nothing.
 """
+import json
 import os
 import platform
 import sys
@@ -25,6 +28,10 @@ _queue: list = []
 _lock = threading.Lock()
 _timer = None
 _BATCH = 200
+_KEEP = 2000                    # events held at most, newest kept
+_MAX_AGE_MS = 30 * 86_400_000   # older unsent events are dropped
+_PENDING = os.path.join(os.path.dirname(__file__), "user_files", "stats_pending.json")
+_loaded = False
 
 
 def enabled() -> bool:
@@ -38,7 +45,7 @@ def track(name: str, **props) -> None:
             return
         with _lock:
             _queue.append({"name": name, "at": int(time.time() * 1000), "props": props or None})
-            del _queue[:-2000]
+            del _queue[:-_KEEP]
         _start_timer()
     except Exception:       # noqa: BLE001 - statistics must never get in the way
         pass
@@ -73,11 +80,51 @@ def _send(batch: list, timeout: float) -> dict:
                 token=account().get("token"), timeout=timeout)
 
 
-def flush(on_reply=None, wait: bool = False) -> None:
+def _load_pending() -> None:
+    """Put events saved at the last close back in front of the queue."""
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
+    try:
+        with open(_PENDING, encoding="utf-8") as f:
+            saved = json.load(f)
+        os.remove(_PENDING)
+    except (OSError, ValueError):
+        return
+    cutoff = time.time() * 1000 - _MAX_AGE_MS
+    saved = [e for e in saved if isinstance(e, dict) and e.get("at", 0) >= cutoff]
+    with _lock:
+        _queue[:0] = saved
+        del _queue[:-_KEEP]
+
+
+def save() -> None:
+    """At close: keep what was not sent for next time. No network."""
+    global _loaded
+    _load_pending()     # an unread file from before joins the queue first
+    with _lock:
+        batch = list(_queue)
+        _queue.clear()
+    _loaded = False     # the next profile opened reads the file back
+    try:
+        if not enabled() or not batch:
+            if os.path.exists(_PENDING):
+                os.remove(_PENDING)
+            return
+        os.makedirs(os.path.dirname(_PENDING), exist_ok=True)
+        tmp = _PENDING + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(batch[-_KEEP:], f)
+        os.replace(tmp, _PENDING)
+    except OSError:
+        pass
+
+
+def flush(on_reply=None) -> None:
     """Send what is waiting. on_reply(reply) runs on the main thread when the
-    server answers; wait=True sends in this thread, briefly (for quitting).
-    With statistics off, on_reply still gets the server's health reply, which
-    carries the newest version too."""
+    server answers. With statistics off, on_reply still gets the server's
+    health reply, which carries the newest version too."""
     if not enabled():
         if on_reply:
             def health():
@@ -89,16 +136,11 @@ def flush(on_reply=None, wait: bool = False) -> None:
                 mw.taskman.run_on_main(lambda: on_reply(reply))
             threading.Thread(target=health, daemon=True).start()
         return
+    _load_pending()
     with _lock:
         batch = _queue[:_BATCH]
         del _queue[:_BATCH]
     if not batch and not on_reply:
-        return
-    if wait:
-        try:
-            _send(batch, 3)
-        except Exception:   # noqa: BLE001
-            pass
         return
 
     def run():
@@ -111,7 +153,7 @@ def flush(on_reply=None, wait: bool = False) -> None:
             if getattr(e, "status", 0) in (0, 502, 503, 500):
                 with _lock:
                     _queue[:0] = batch
-                    del _queue[:-2000]
+                    del _queue[:-_KEEP]
         if ok and on_reply:
             mw.taskman.run_on_main(lambda: on_reply(reply))
     threading.Thread(target=run, daemon=True).start()

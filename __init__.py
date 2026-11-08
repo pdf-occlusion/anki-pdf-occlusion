@@ -271,7 +271,7 @@ def _on_profile_did_open() -> None:
 def _on_profile_will_close() -> None:
     from . import telemetry
     telemetry.track("anki_close")
-    telemetry.flush(wait=True)
+    telemetry.save()
 
 
 gui_hooks.profile_did_open.append(_on_profile_did_open)
