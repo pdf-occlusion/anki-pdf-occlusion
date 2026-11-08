@@ -434,7 +434,15 @@ class _Page:
         by_line = {}
         for w, lid in self.seq[start:start + len(toks)]:
             by_line.setdefault(lid, []).append([w["x"], w["y"], w["w"], w["h"]])
-        return [_union(r) for r in by_line.values()]
+        out = []
+        for lid, rects in by_line.items():
+            ln = self.lines[lid]
+            # a short label read off a picture, mostly named: the whole label
+            # is the answer, and recognition often splits or trims its words
+            if ln.get("src") == "ocr" and len(ln["words"]) <= 5 and len(rects) * 2 >= len(ln["words"]):
+                rects = [[w["x"], w["y"], w["w"], w["h"]] for w in ln["words"]]
+            out.append(_union(rects))
+        return out
 
     def uses_ocr(self, t):
         """Does a target land on recognised text (as opposed to the text layer)?"""
