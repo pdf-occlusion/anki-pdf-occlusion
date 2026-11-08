@@ -44,105 +44,43 @@ SITE = "https://pdf-occlusion.github.io"
 MAX_PIXELS = 1_150_000
 _ACCOUNT = os.path.join(os.path.dirname(__file__), "user_files", "account.json")
 
+# The few choices that apply to any document; the server works out the rest
+# (what kind of document it is, what matters on each page) by reading it.
 # (setting, label, [(value, label), ...]); the first choice is the default
-SUBJECT = ("subject", "Subject", [
-    ("auto", "Detect automatically"),
-    ("anatomy", "Anatomy or embryology"),
-    ("histology", "Histology or pathology"),
-    ("pharmacology", "Pharmacology"),
-    ("physiology", "Physiology or biochemistry"),
-    ("microbiology", "Microbiology"),
-    ("clinical", "Clinical medicine"),
-    ("language", "A language"),
-    ("other", "Something else"),
+DENSITY = ("density", "Cards", [
+    ("fewer", "Fewer"),
+    ("balanced", "Balanced"),
+    ("more", "More"),
 ])
-WHAT = [
+MORE = [
     ("labels", "Figure labels", [
+        ("auto", "Decide for each document"),
+        ("key", "Only the ones that matter"),
         ("all", "Every label"),
-        ("relevant", "Only key labels"),
-        ("none", "Don't box labels"),
     ]),
     ("text", "Bullet text", [
-        ("key_phrase", "Box the key phrase"),
-        ("whole_bullet", "Box all but the subject"),
-        ("block", "Box sub-bullets as one block"),
-        ("skip_on_figures", "Only on slides with no figure"),
-        ("none", "Don't box bullets"),
-    ]),
-    ("numbers", "Numbers and doses", [
-        ("key", "Only important numbers"),
-        ("all", "Every number"),
-        ("none", "Don't box numbers"),
-    ]),
-    ("emphasis", "Bold or colored text", [
-        ("first", "Box it first"),
-        ("same", "Treat like other text"),
-    ]),
-    ("titles", "Slide titles", [
-        ("never", "Don't box titles"),
-        ("when_answer", "Box when the title is the answer"),
-    ]),
-    ("pictures", "Pictures without labels", [
-        ("name", "Box the caption that names it"),
-        ("skip", "Don't box captions"),
-    ]),
-]
-HOW = [
-    ("density", "Cards", [
-        ("balanced", "Balanced"),
-        ("fewer", "Fewer (most testable only)"),
-        ("more", "More (every testable fact)"),
-    ]),
-    ("lists", "Lists", [
-        ("per_item", "One card per item"),
-        ("one_card", "One card for the whole list"),
+        ("key_phrase", "Hide the key phrase"),
+        ("whole_point", "Hide the whole point"),
     ]),
     ("tables", "Tables", [
         ("per_cell", "One card per cell"),
         ("per_row", "One card per row"),
-        ("per_column", "One card per column"),
-        ("skip", "Don't box tables"),
-    ]),
-    ("flows", "Flowcharts and pathways", [
-        ("per_step", "One card per step"),
-        ("whole", "One card for the whole chain"),
-        ("skip", "Don't box flowcharts"),
-    ]),
-    ("repeats", "Label shown twice", [
-        ("together", "One card for both"),
-        ("separate", "A card for each"),
-    ]),
-    ("pairs", "Term and meaning lists", [
-        ("meaning", "Hide the meaning"),
-        ("term", "Hide the term"),
-        ("both", "Both, as separate cards"),
     ]),
 ]
-CHOICES = [SUBJECT] + WHAT + HOW
-SKIPS = [
-    ("title", "Title slides"),
-    ("objectives", "Objectives and outlines"),
-    ("references", "References and thank-you slides"),
-    ("cases", "Cases and audience questions"),
-    ("recaps", "Recaps of earlier slides"),
-    ("duplicates", "Repeated slides and builds"),
-]
+CHOICES = MORE
 SCOPES = [
     ("empty", "Only slides I haven't boxed"),
     ("current", "Only this slide"),
     ("all", "All slides (clears my boxes)"),
 ]
 DEFAULTS = {
-    **{key: opts[0][0] for key, _, opts in CHOICES},
-    "skip": [k for k, _ in SKIPS], "custom": "", "use_notes": True, "scope": "empty",
+    "density": "balanced",
+    **{key: opts[0][0] for key, _, opts in MORE},
+    "skip_admin": True, "custom": "", "use_notes": True, "scope": "empty",
     "show_more": False,
 }
-# the one choice most people make; each sets a few of the detailed settings
-PRESETS = [
-    ("essentials", "Essentials", {"density": "fewer", "labels": "relevant", "numbers": "key"}),
-    ("balanced", "Balanced", {"density": "balanced", "labels": "all", "numbers": "key"}),
-    ("everything", "Everything", {"density": "more", "labels": "all", "numbers": "all"}),
-]
+# what the server gets with every batch
+SENT = ["density", "labels", "text", "tables", "skip_admin", "custom"]
 
 
 # ------------------------------------------------------------------ config
@@ -153,7 +91,12 @@ def _cfg() -> dict:
 
 def settings() -> dict:
     s = dict(DEFAULTS)
-    s.update({k: v for k, v in (_cfg().get("auto_occlude") or {}).items() if k in DEFAULTS})
+    saved = _cfg().get("auto_occlude") or {}
+    if "skip_admin" not in saved:
+        # saved by a version with the old, longer list of choices: keep only
+        # what still means the same thing
+        saved = {k: v for k, v in saved.items() if k in ("custom", "use_notes", "scope")}
+    s.update({k: v for k, v in saved.items() if k in DEFAULTS})
     return s
 
 
@@ -371,6 +314,38 @@ def slide_payload(n: int, image: QImage, lines: list) -> dict:
                    "ocr": ln["src"] == "ocr", "text": " ".join(w["t"] for w in ln["words"])}
                   for ln in lines],
     }
+
+
+def _page_text(path: str, page_index: int, scale: float) -> str:
+    try:
+        return "\n".join(" ".join(w[0] for w in ln) for ln in _group_lines(_page_words(path, page_index, scale)))
+    except Exception:       # noqa: BLE001 - a page that can't be read is sent empty
+        return ""
+
+
+def _thumb(image: QImage, width: int = 900) -> str:
+    img = image.scaledToWidth(min(width, image.width()), Qt.TransformationMode.SmoothTransformation)
+    buf = QBuffer()
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    img.convertToFormat(QImage.Format.Format_RGB32).save(buf, "JPEG", 70)
+    return base64.b64encode(bytes(buf.data())).decode()
+
+
+def document_payload(dlg, doc: dict, prepared: list, notes: str) -> dict:
+    """The whole PDF, for the server's first read: every page's text (the
+    text layer; text recognition only where it already ran, on the slides
+    being occluded), a few page images, and the notes."""
+    start, count = doc["start"], doc["count"]
+    read = {gidx - start: "\n".join(" ".join(w["t"] for w in ln["words"]) for ln in lines)
+            for gidx, _local, _img, lines, _p in prepared}
+    pages = []
+    for local in range(min(count, 400)):
+        text = _page_text(doc["path"], local, dlg._render_scale) or read.get(local, "")
+        pages.append({"n": local + 1, "text": text[:3000]})
+    step = max(1, count // 6)
+    thumbs = [{"n": i + 1, "media_type": "image/jpeg", "image": _thumb(dlg._page_image(start + i))}
+              for i in range(0, count, step)][:6]
+    return {"pages": pages, "thumbs": thumbs, "notes": (notes or "")[:12000]}
 
 
 # ------------------------------------------------------------------ plan -> boxes
@@ -652,31 +627,37 @@ class AutoOccludeDialog(QDialog):
         self.scope.currentIndexChanged.connect(self._refresh)
         top.addRow("Slides", self.scope)
 
-        # how much to box: three buttons, side by side
+        # how many cards: three buttons, side by side
         seg = QHBoxLayout()
         seg.setSpacing(0)
-        self.preset_group = QButtonGroup(self)
-        self.preset_group.setExclusive(True)
-        self.preset_btns = {}
-        for i, (key, label, _) in enumerate(PRESETS):
+        self.density_group = QButtonGroup(self)
+        self.density_group.setExclusive(True)
+        self.density_btns = {}
+        for value, label in DENSITY[2]:
             b = QPushButton(label)
             b.setCheckable(True)
-            b.setMinimumWidth(110)
-            self.preset_group.addButton(b)
-            self.preset_btns[key] = b
-            b.clicked.connect(lambda _=False, k=key: self._apply_preset(k))
+            b.setMinimumWidth(100)
+            b.setChecked(value == s["density"])
+            self.density_group.addButton(b)
+            self.density_btns[value] = b
             seg.addWidget(b)
         seg.addStretch()
-        top.addRow("How much to box", seg)
+        top.addRow("Cards", seg)
 
         self.notes = QCheckBox("Use the notes PDF")
         self.notes.setChecked(bool(s["use_notes"]) and has_notes)
         self.notes.setVisible(has_notes)
         if has_notes:
             top.addRow("", self.notes)
+
+        # the student's own words, kept between documents
+        self.custom = QPlainTextEdit()
+        self.custom.setPlainText(s["custom"])
+        self.custom.setFixedHeight(64)
+        top.addRow("Your instructions", self.custom)
         root.addLayout(top)
 
-        # everything else, folded away until asked for
+        # the rest, folded away until asked for
         self.more_toggle = QPushButton()
         self.more_toggle.setFlat(True)
         self.more_toggle.setStyleSheet("QPushButton{text-align:left; padding:4px 0; color:palette(link);}")
@@ -684,54 +665,16 @@ class AutoOccludeDialog(QDialog):
         root.addWidget(self.more_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.more = QWidget()
-        more = QVBoxLayout(self.more)
-        more.setContentsMargins(0, 0, 0, 0)
+        form = QFormLayout(self.more)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.combos = {}
-        sub = QFormLayout()
-        sub.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        sub.addRow(SUBJECT[1], self._combo(SUBJECT, s))
-        more.addLayout(sub)
-
-        cols = QHBoxLayout()
-        cols.setSpacing(24)
-        for title, group in (("What to box", WHAT), ("How to make cards", HOW)):
-            col = QVBoxLayout()
-            head = QLabel(title)
-            head.setStyleSheet("font-weight:bold; margin-top:8px;")
-            col.addWidget(head)
-            form = QFormLayout()
-            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-            form.setVerticalSpacing(6)
-            for item in group:
-                form.addRow(item[1], self._combo(item, s))
-            col.addLayout(form)
-            cols.addLayout(col, stretch=1)
-        more.addLayout(cols)
-
-        skip_title = QLabel("Skip")
-        skip_title.setStyleSheet("font-weight:bold; margin-top:6px;")
-        more.addWidget(skip_title)
-        grid = QGridLayout()
-        self.skips = {}
-        for i, (key, label) in enumerate(SKIPS):
-            cb = QCheckBox(label)
-            cb.setChecked(key in s["skip"])
-            self.skips[key] = cb
-            grid.addWidget(cb, i // 2, i % 2)
-        more.addLayout(grid)
-
-        custom_title = QLabel("Your own instructions")
-        custom_title.setStyleSheet("font-weight:bold; margin-top:6px;")
-        more.addWidget(custom_title)
-        self.custom = QPlainTextEdit()
-        self.custom.setPlainText(s["custom"])
-        self.custom.setFixedHeight(70)
-        more.addWidget(self.custom)
+        for item in MORE:
+            form.addRow(item[1], self._combo(item, s))
+        self.skip_admin = QCheckBox("Skip title, objective and reference slides")
+        self.skip_admin.setChecked(bool(s["skip_admin"]))
+        form.addRow("", self.skip_admin)
         root.addWidget(self.more)
-
-        for c in self.combos.values():
-            c.currentIndexChanged.connect(self._sync_preset)
-        self._sync_preset()
 
         buttons = QDialogButtonBox()
         self.start_btn = buttons.addButton("Start", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -749,26 +692,10 @@ class AutoOccludeDialog(QDialog):
         self._load_balance()
         telemetry.watch_buttons(self, "auto_occlude")
 
-    def _apply_preset(self, key):
-        values = dict((k, v) for k, _, v in PRESETS)[key]
-        for setting, value in values.items():
-            c = self.combos[setting]
-            c.setCurrentIndex(c.findData(value))
-        self._sync_preset()
-
-    def _sync_preset(self):
-        """Light up the preset the detailed settings match, or none."""
-        current = {k: c.currentData() for k, c in self.combos.items()}
-        match = next((k for k, _, v in PRESETS if all(current[a] == b for a, b in v.items())), None)
-        self.preset_group.setExclusive(False)
-        for k, b in self.preset_btns.items():
-            b.setChecked(k == match)
-        self.preset_group.setExclusive(True)
-
     def _show_more(self, on: bool):
         self.more.setVisible(on)
         self.more_toggle.setText("Fewer settings" if on else "More settings")
-        self.setMinimumWidth(780 if on else 520)
+        self.setMinimumWidth(520)
         self.adjustSize()
 
     def _combo(self, item, s) -> QComboBox:
@@ -840,8 +767,9 @@ class AutoOccludeDialog(QDialog):
 
     def _gather(self) -> dict:
         s = {k: c.currentData() for k, c in self.combos.items()}
-        s["skip"] = [k for k, cb in self.skips.items() if cb.isChecked()]
-        s["custom"] = self.custom.toPlainText().strip()[:600]
+        s["density"] = next((k for k, b in self.density_btns.items() if b.isChecked()), "balanced")
+        s["skip_admin"] = self.skip_admin.isChecked()
+        s["custom"] = self.custom.toPlainText().strip()[:1000]
         s["use_notes"] = self.notes.isChecked()
         s["scope"] = self.scope.currentData()
         s["show_more"] = self.more.isVisible()
@@ -890,10 +818,14 @@ class Run:
             self.prepared.append((gidx, local, image, lines, slide_payload(local + 1, image, lines)))
             self.progress.setValue(i + 1)
             QApplication.processEvents()
-        self.progress.setLabelText("Occluding…")
-        lecture = self.dlg._doc_for_page(self.pages[0][0]).get("lecture", "")
-        in_background(lambda: call("/v1/jobs", {"slides": len(self.prepared), "lecture": lecture}, self.token, 30),
-                      self._job_started)
+        self.progress.setLabelText("Reading the whole document…")
+        doc = self.dlg._doc_for_page(self.pages[0][0])
+        lecture = doc.get("lecture", "")
+        whole = document_payload(self.dlg, doc, self.prepared, self.notes if self.s.get("use_notes") else "")
+        body = {"slides": len(self.prepared), "lecture": lecture, "doc": whole,
+                "settings": {k: self.s[k] for k in SENT}}
+        # the server reads the whole document before the first batch
+        in_background(lambda: call("/v1/jobs", body, self.token, 300), self._job_started)
 
     def _cancel(self):
         self.cancelled = True
@@ -915,6 +847,9 @@ class Run:
                 showWarning(str(err), parent=self.dlg, title="PDF Occlusion")
             return self.on_finish(self.made, self.dropped, self.done_slides, False)
         self.job, self.batch = res["job"], int(res.get("batch_size") or 6)
+        what = (res.get("document") or {}).get("subject")
+        if what:
+            self.progress.setLabelText(f"Occluding: {what}…")
         self.queue = [self.prepared[i:i + self.batch] for i in range(0, len(self.prepared), self.batch)]
         self._next()
 
@@ -923,7 +858,7 @@ class Run:
             return self._finish()
         chunk = self.queue[0]
         body = {"slides": [c[4] for c in chunk],
-                "settings": {k: self.s[k] for k in [c[0] for c in CHOICES] + ["skip", "custom"]}}
+                "settings": {k: self.s[k] for k in SENT}}
         if self.s.get("use_notes") and self.notes:
             body["notes"] = self.notes
 
