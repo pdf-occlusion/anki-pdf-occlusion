@@ -25,6 +25,7 @@ from .card_builder import (ensure_note_type, create_occlusion_notes,
                            cloze_card_count, pdf_path_in, SLIDES_PDF_FIELD,
                            NoteTypeConflict)
 from . import ocr
+from . import telemetry
 from .pdf_renderer import (render_pdf, get_text_word_rects, get_page_text,
                            get_table_cell_rects, merge_word_rects)
 
@@ -225,6 +226,8 @@ class PDFOcclusionDialog(QDialog):
         self._canvas.set_mask_color(tuple(_cfg("mask_color", [120, 120, 120])))
         self._canvas.set_editing_opacity(int(_cfg("editing_mask_opacity", 150)))
         self._apply_default_zoom()
+
+        telemetry.watch_buttons(self, "main")
 
         # Opened from a PDF Occlusion card in Browse? Jump straight to the
         # slide and box that made it.
@@ -786,6 +789,7 @@ class PDFOcclusionDialog(QDialog):
                                    on_progress=on_progress)
             except Exception as exc:
                 progress.close()
+                telemetry.track("error", where="open_pdf", message=str(exc)[:200])
                 showWarning(f"Could not open this PDF:\n{path}\n\n{exc}")
                 return None
             if progress.wasCanceled():
@@ -843,6 +847,7 @@ class PDFOcclusionDialog(QDialog):
         # ~30s; get that out of the way now rather than under a Detect click
         ocr.warm_up()
 
+        telemetry.track("pdf_open", pages=len(all_pages), files=len(docs), reopened=silent_resume)
         self._maybe_resume_sessions(silent=silent_resume)
 
         self._show_page()
@@ -1251,6 +1256,7 @@ class PDFOcclusionDialog(QDialog):
                 rects = get_text_word_rects(
                     doc["path"], local, self._render_scale, region=region)
         except Exception as exc:
+            telemetry.track("error", where="detect", message=str(exc)[:200])
             showWarning(f"Detection failed:\n{exc}")
             return
 
@@ -1260,6 +1266,7 @@ class PDFOcclusionDialog(QDialog):
             try:
                 rects = self._ocr_region(region)
             except ocr.OcrError as exc:
+                telemetry.track("error", where="ocr", message=str(exc)[:200])
                 showWarning(f"Text recognition failed:\n{exc}")
                 return
 
@@ -1442,12 +1449,17 @@ class PDFOcclusionDialog(QDialog):
         if not doc:
             return
         counts = {k: len(self._auto_scope_pages(doc, k)) for k, _ in auto_occlude.SCOPES}
+        telemetry.track("auto_occlude_open", pages=doc["count"],
+                        signed_in=bool(auto_occlude.account().get("token")))
         win = auto_occlude.AutoOccludeDialog(
             self, bool(doc.get("notes_pdf")), counts, _PRIMARY_BTN_QSS)
         if not win.exec() or not win.chosen:
+            telemetry.track("auto_occlude_closed")
             return
         s = win.chosen
         idxs = self._auto_scope_pages(doc, s["scope"])
+        telemetry.track("auto_occlude_start", pages=len(idxs), custom_chars=len(s.get("custom") or ""),
+                        **{k: v for k, v in s.items() if k not in ("custom", "show_more")})
         if len(idxs) > 150:
             showWarning("Auto-occlude takes up to 150 slides at a time. "
                         "Split the PDF, or run it on the slides without boxes.",
@@ -1477,6 +1489,7 @@ class PDFOcclusionDialog(QDialog):
         self._refresh_count()
 
     def _auto_finished(self, made, dropped, slides, complete):
+        telemetry.track("auto_occlude_done", cards=made, dropped=dropped, slides=slides, complete=complete)
         self._auto_btn.setEnabled(bool(self._pages))
         self._auto_run = None
         self._update_controls()
@@ -1726,6 +1739,7 @@ class PDFOcclusionDialog(QDialog):
         self._persist_sessions()
 
         if error:
+            telemetry.track("error", where="create_cards", message=error.strip().splitlines()[-1][:200])
             log = _log_error(error)
             mw.reset()
             showWarning(
@@ -1738,6 +1752,9 @@ class PDFOcclusionDialog(QDialog):
             )
             return
 
+        telemetry.track("cards_created", cards=created + updated, created=created, updated=updated,
+                        unchanged=unchanged, cloze=cloze_made, canceled=canceled,
+                        published=bool(hosting), stale=len(stale_nids))
         deleted = 0
         if stale_nids and not canceled and askUser(
             f"Delete {len(stale_nids)} note(s) whose boxes or cloze cards "

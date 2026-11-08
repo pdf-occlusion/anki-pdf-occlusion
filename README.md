@@ -70,6 +70,7 @@ The same window sets how it occludes: the subject; figure labels (all or only th
 | `add_editor_button` | `bool` | `true` | Show the toolbar button in the card editor |
 | `close_after_creating` | `bool` | `true` | Close the dialog once cards are created |
 | `pdf_hosting` | object | off | Publish the Notes / Slides PDFs so the card buttons open on your phone: `folder` you serve on the web (e.g. a GitHub Pages clone), its `base_url`, and `git_push` to commit and push them for you with your own git credentials. Off = cards keep local paths, desktop only. Published PDFs are public |
+| `usage_stats` | `bool` | `true` | Send usage statistics (see below). `false` sends none |
 
 ## Open the PDFs on your phone
 
@@ -87,6 +88,12 @@ Every card has **Slides** and **Notes** buttons that open the lecture's PDFs. Ou
 3. From then on, `Create All Cards` copies each PDF into that folder, commits it, pushes it, and gives the cards its web address.
 
 The add-on never asks for or stores a GitHub password or token. It runs `git push` in that folder, so it pushes with whatever login your clone already uses, and only to the repository you chose. Anyone with a PDF's exact address can open it, so only publish what you are allowed to share. Set `git_push` to `false` to commit and push yourself.
+
+## Usage statistics
+
+The add-on tells the PDF Occlusion server which buttons are pressed, how many pages a PDF has, how many cards are made, how Auto-occlude runs went, any errors, and the add-on, Anki and OS versions. Each report carries a one-way hash of the computer's id, never the id itself, and when you are signed in for Auto-occlude, your account. It never sends slide images, file names, card text or anything you type (Auto-occlude itself sends the slides and the PDF's name only when you run it). Set `usage_stats` to `false` to turn this off.
+
+When a newer version is out, the add-on installs it through Anki's own updater on the next start, and Anki asks you to restart.
 
 ## Contact
 

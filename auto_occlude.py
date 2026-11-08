@@ -36,6 +36,8 @@ from aqt.qt import (
 from aqt.utils import showWarning, tooltip
 
 from . import ocr
+from . import telemetry
+from .version import VERSION
 
 DEFAULT_SERVER = "https://pdf-occlusion-api.pdf-occlusion.workers.dev"
 SITE = "https://pdf-occlusion.github.io"
@@ -237,6 +239,7 @@ def call(path: str, body: Optional[dict] = None, token: Optional[str] = None,
     req.add_header("content-type", "application/json")
     req.add_header("user-agent", "pdf-occlusion-addon")
     req.add_header("x-device", device_id())
+    req.add_header("x-addon-version", VERSION)
     if token:
         req.add_header("authorization", f"Bearer {token}")
     try:
@@ -558,6 +561,8 @@ class SignIn:
         self.timer, self.started = None, 0.0
 
     def start(self):
+        telemetry.track("sign_in_start")
+
         def go():
             label = f"Anki on {os.uname().nodename}" if hasattr(os, "uname") else "Anki on Windows"
             return call("/v1/link/start", {"label": label[:80]})
@@ -565,6 +570,7 @@ class SignIn:
 
     def _started(self, res, err):
         if err:
+            telemetry.track("error", where="sign_in", message=str(err)[:200])
             showWarning(str(err), parent=self.parent, title="PDF Occlusion")
             return
         self.code, self.secret = res["code"], res["secret"]
@@ -605,6 +611,7 @@ class SignIn:
             self._stop()
             self.box.close()
             _save_account({"token": res["token"], "email": res.get("email")})
+            telemetry.track("sign_in_done")
             tooltip(f"Signed in as {res.get('email') or 'your account'}", parent=self.parent)
             self.on_done()
         in_background(go, done)
@@ -740,6 +747,7 @@ class AutoOccludeDialog(QDialog):
         self.free_pages = 50
         self._refresh()
         self._load_balance()
+        telemetry.watch_buttons(self, "auto_occlude")
 
     def _apply_preset(self, key):
         values = dict((k, v) for k, _, v in PRESETS)[key]
@@ -797,6 +805,7 @@ class AutoOccludeDialog(QDialog):
 
     def _sign(self):
         if account().get("token"):
+            telemetry.track("sign_out")
             sign_out()
             self.balance = None
             self._refresh()
@@ -891,6 +900,8 @@ class Run:
 
     def _job_started(self, res, err):
         if err:
+            telemetry.track("auto_occlude_error", stage="start", status=getattr(err, "status", 0),
+                            message=str(err)[:200])
             self.progress.close()
             if isinstance(err, ServerError) and err.status == 402:
                 showWarning(f"{err}. Get more on the pricing page.",
@@ -922,6 +933,8 @@ class Run:
                 if retry and not self.cancelled:
                     QTimer.singleShot(3000 * (attempt + 1), lambda: self._next(attempt + 1))
                     return
+                telemetry.track("auto_occlude_error", stage="batch", status=getattr(err, "status", 0),
+                                message=str(err)[:200])
                 self.progress.close()
                 showWarning(f"Auto-occlude stopped: {err}\n\nBoxes made so far are kept.",
                             parent=self.dlg, title="PDF Occlusion")

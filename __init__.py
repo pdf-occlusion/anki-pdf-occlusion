@@ -15,8 +15,10 @@ def _get_config():
     return mw.addonManager.getConfig(__name__) or {}
 
 
-def open_pdf_occlusion(editor: Editor = None):
+def open_pdf_occlusion(editor: Editor = None, origin: str = ""):
     from .pdf_occlusion_dialog import PDFOcclusionDialog
+    from . import telemetry
+    telemetry.track("dialog_open", origin=origin or ("editor" if editor is not None else "menu"))
     # From the Browse/Add editor: if the current note is one of ours, open
     # its session directly and focus the slide + box behind that card.
     note_id = None
@@ -191,12 +193,89 @@ def _migrate_media() -> None:
         tooltip(msg, period=6000)
 
 
+# ── Updates and the Auto-occlude announcement ─────────────────────────────────
+#
+# On every start the add-on says hello to the PDF Occlusion server (see
+# telemetry.py), which answers with the newest release. An add-on installed
+# from AnkiWeb that is older installs the update straight away through Anki's
+# own updater, once per release, and Anki asks for a restart.
+
+def _after_hello(reply) -> None:
+    from . import telemetry
+    from .version import VERSION
+
+    latest = (reply or {}).get("latest_version")
+    addon_id = telemetry.addon_dir_id()
+    if not latest or not addon_id or not telemetry.older(VERSION, latest):
+        return
+    marker = f"update_tried_{latest}"
+    if _seen_version(marker):
+        return
+    _record_version(marker, 1)
+    telemetry.track("update_started", to=latest)
+
+    def done(log) -> None:
+        telemetry.track("update_finished", to=latest, ok=bool(log))
+        telemetry.flush()
+        if log:
+            from aqt.addons import show_log_to_user
+            show_log_to_user(mw, log)
+
+    try:
+        from aqt.addons import install_or_update_addon
+        install_or_update_addon(mw, mw.addonManager, addon_id, done)
+    except ImportError:     # older Anki: its own update prompt instead
+        from aqt.addons import check_and_prompt_for_updates
+        check_and_prompt_for_updates(mw, mw.addonManager, done, requested_by_user=True)
+
+
+# Bump to show the announcement again for something new.
+ANNOUNCEMENT = 1
+
+
+def _announce() -> None:
+    from aqt.qt import QMessageBox
+    from . import telemetry
+
+    if not mw.col or _seen_version("announcement") >= ANNOUNCEMENT:
+        return
+    _record_version("announcement", ANNOUNCEMENT)
+    box = QMessageBox(mw)
+    box.setWindowTitle("PDF Occlusion")
+    box.setText("New in PDF Occlusion: Auto-occlude")
+    box.setInformativeText(
+        "Open a PDF in PDF Occlusion and click Auto-occlude. It boxes the "
+        "slides for you, and you can change any box before making cards.\n\n"
+        "Your first 50 pages are free."
+    )
+    open_btn = box.addButton("Open PDF Occlusion", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
+    telemetry.track("announcement_shown", n=ANNOUNCEMENT)
+    box.exec()
+    opened = box.clickedButton() is open_btn
+    telemetry.track("announcement_choice", n=ANNOUNCEMENT, opened=opened)
+    if opened:
+        open_pdf_occlusion(origin="announcement")
+
+
 def _on_profile_did_open() -> None:
+    from . import telemetry
+
     _migrate_media()
     _maybe_offer_template_upgrade()
+    telemetry.track("anki_open")
+    telemetry.flush(on_reply=_after_hello)
+    QTimer.singleShot(2500, _announce)
+
+
+def _on_profile_will_close() -> None:
+    from . import telemetry
+    telemetry.track("anki_close")
+    telemetry.flush(wait=True)
 
 
 gui_hooks.profile_did_open.append(_on_profile_did_open)
+gui_hooks.profile_will_close.append(_on_profile_will_close)
 
 
 # ── Editor toolbar button ─────────────────────────────────────────────────────

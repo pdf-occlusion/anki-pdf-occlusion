@@ -11,6 +11,7 @@
     "default_deck": "",
     "occlusion_mode": "ao",
     "show_all_shortcut": "g",
+    "usage_stats": true,
     "pdf_hosting": {
         "folder": "",
         "base_url": "",
