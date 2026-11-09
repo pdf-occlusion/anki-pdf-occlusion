@@ -606,15 +606,27 @@ class SignIn:
             return
         self.code, self.secret = res["code"], res["secret"]
         webbrowser.open(res["url"])
-        self.box = QProgressDialog(f"Approve code {self.code} in your browser.", "Cancel", 0, 0, self.parent)
+        self.box = QProgressDialog(
+            f"Your browser opened a page showing code {self.code}.\n"
+            "Sign in with Google there, then click “link this anki”.",
+            "Cancel", 0, 0, self.parent)
         self.box.setWindowTitle("Sign in")
+        # in front of the Auto-occlude window until signed in or cancelled
+        self.box.setWindowModality(Qt.WindowModality.WindowModal)
         self.box.setMinimumDuration(0)
-        self.box.canceled.connect(self._stop)
+        self.box.canceled.connect(self._cancel)
+        self.box.rejected.connect(self._cancel)  # Esc hides the box without canceled
         self.box.show()
         self.started = time.time()
         self.timer = QTimer(self.parent)
         self.timer.timeout.connect(self._poll)
         self.timer.start(2000)
+
+    def _cancel(self):
+        # close() also emits canceled, but by then a finished sign-in has stopped the timer
+        if self.timer:
+            telemetry.track("sign_in_cancel", seconds=round(time.time() - self.started))
+        self._stop()
 
     def _stop(self):
         if self.timer:
