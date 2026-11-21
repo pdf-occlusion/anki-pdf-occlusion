@@ -116,6 +116,20 @@ def _contains(r, w):
     return r[0] <= cx <= r[2] and r[1] <= cy <= r[3]
 
 
+def _fuzzy_words(flat, toks, cutoff=0.8):
+    """OCR misreads ("intimal thoracio artery" for "internal thoracic artery"): the run of
+    words, n-1 to n+1 long, whose letters are closest to the phrase, if close enough."""
+    from difflib import SequenceMatcher
+    want, n, best = " ".join(toks), len(toks), (cutoff, None)
+    for m in {max(1, n - 1), n, n + 1}:
+        for s in range(len(flat) - m + 1):
+            got = " ".join(_norm(w["t"]) for _, w in flat[s:s + m])
+            r = SequenceMatcher(None, want, got).ratio()
+            if r > best[0]:
+                best = (r, flat[s:s + m])
+    return best[1]
+
+
 def phrase_words(unit, text, img=None):
     """Consecutive words of `unit` matching `text` -> list of (line index, word)."""
     flat = [(k, w) for k, ln in enumerate(unit["lines"]) for w in ln["words"] if _norm(w["t"])]
@@ -148,6 +162,9 @@ def phrase_words(unit, text, img=None):
     want = " ".join(str(text).split()).lower()
     at = s.lower().find(want)
     if at < 0:
+        fuzzy = _fuzzy_words(flat, toks)
+        if fuzzy:
+            return fuzzy
         raise ValueError(f"phrase not in {unit['id']}: {text!r}")
     end = at + len(want)
     out = []
@@ -390,8 +407,8 @@ def plan_to_boxes(plan, units, W, H, img=None):
         if isinstance(hide, (str, dict)):
             hide = [hide]
         rects = []
-        try:
-            for t in hide or []:
+        for t in hide or []:
+            try:
                 if isinstance(t, str) and t.strip() in by_id:
                     u = by_id[t.strip()]
                     target = [w for ln in u["lines"] for w in ln["words"]]
@@ -424,9 +441,8 @@ def plan_to_boxes(plan, units, W, H, img=None):
                             others.append({**src, "x0": x["x1"]})
                 h = sorted(w["y1"] - w["y0"] for w in target)[len(target) // 2]
                 rects += [pad(r, h, others, W, H) for r in tidy_rects(spans, others)]
-        except (ValueError, KeyError, TypeError):
-            dropped += 1
-            continue
+            except (ValueError, KeyError, TypeError):
+                continue  # one unplaceable target (OCR misread, bad id) loses only itself
         if rects:
             cards.append(([[r[0], r[1], r[2] - r[0], r[3] - r[1]] for r in rects], card.get("q", "")))
         else:
