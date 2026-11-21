@@ -19,6 +19,7 @@ from aqt.qt import (
 from aqt.utils import askUser, showInfo, showWarning, tooltip
 
 from . import auto_occlude
+from . import hover_explain
 from . import note_recovery
 from . import pdf_hosting
 from . import session_store
@@ -621,6 +622,19 @@ class PDFOcclusionDialog(QDialog):
         self._apply_default_zoom()
 
         telemetry.watch_buttons(self, "main")
+
+        # Hovering a top-bar control shows a small animated card of what it
+        # does, in place of a plain tooltip (see hover_explain). Controls
+        # that don't exist are skipped.
+        hover_explain.install_all(self, (
+            ("_open_btn", "open"), ("_title_btn", "lecture"),
+            ("_rail_btn", "slides"), ("_prev_btn", "prev"),
+            ("_next_btn", "next"), ("_draw_btn", "draw"),
+            ("_select_btn", "select"), ("_text_btn", "text"),
+            ("_detect_btn", "detect"), ("_cloze_btn", "cloze"),
+            ("_zoom_label", "zoom"), ("_auto_btn", "auto"),
+            ("_create_btn", "create"),
+        ), _colors)
 
         # Opened from a PDF Occlusion card in Browse? Jump straight to the
         # slide and box that made it.

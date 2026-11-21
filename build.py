@@ -45,6 +45,7 @@ ADDON_FILES = [
     "auto_occlude.py",
     "vision.py",
     "whole_slide.py",
+    "hover_explain.py",
     "telemetry.py",
     "version.py",
     "config.json",
