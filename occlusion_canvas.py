@@ -51,7 +51,8 @@ from aqt.qt import (
     QWidget, QPainter, QPen, QColor, QRect, QPoint, QPointF,
     QPixmap, QImage, Qt, QCursor, QMenu, QAction, QKeyEvent,
     QInputDialog, QEvent, QPolygonF, QFont, QFontMetrics, QTextEdit,
-    QTextOption, QFrame, pyqtSignal,
+    QTextOption, QFrame, pyqtSignal, QRectF, QFontMetricsF, QToolButton,
+    QHBoxLayout, QTimer, QSize,
 )
 
 # ------------------------------------------------------------------ colours
@@ -133,6 +134,45 @@ _ANNOT_FG   = QColor(20, 20, 20)
 _ANNOT_HINT = QColor(131, 110, 170, 150)   # outline, only while the Text tool is up
 
 
+# Text colours offered once a text box is selected: ink, red, blue, the accent
+ANNOT_COLORS = ("#141414", "#d93025", "#1a73e8", "#6e5aa8")
+
+
+def annotation_pad(a: dict) -> tuple:
+    """Inner padding of a sized text box in image px: (x, y)."""
+    size = float(a.get("size") or 0)
+    return size * 0.22, size * 0.1
+
+
+def annotation_text_font(base: QFont, a: dict, zoom: float = 1.0) -> QFont:
+    font = QFont(base)
+    font.setPixelSize(max(1, round(float(a["size"]) * zoom)))
+    font.setBold(bool(a.get("bold")))
+    return font
+
+
+def layout_annotation(a: dict, base: QFont) -> None:
+    """Size a text box to its text: one that grows as you type (auto) takes
+    the width of its longest line; one dragged to a width wraps inside it.
+    Either way the height follows the text, so nothing is ever cut off."""
+    if not a.get("size"):
+        return
+    px, py = annotation_pad(a)
+    fm = QFontMetricsF(annotation_text_font(base, a))
+    text = a.get("text") or ""
+    lines = text.split("\n") if text else [""]
+    if a.get("auto"):
+        w = max(fm.horizontalAdvance(ln or "X") for ln in lines) + 2 * px + 2
+        h = fm.lineSpacing() * len(lines) + 2 * py
+    else:
+        w = a["w"]
+        flags = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+                    | Qt.TextFlag.TextWordWrap)
+        need = fm.boundingRect(QRectF(0, 0, max(1, w - 2 * px), 1e6), flags, text or "X")
+        h = max(need.height(), fm.lineSpacing()) + 2 * py
+    a["w"], a["h"] = int(math.ceil(w)), int(math.ceil(h))
+
+
 def annotation_rect(a: dict, zoom: float = 1.0) -> QRect:
     return QRect(int(a["x"] * zoom), int(a["y"] * zoom),
                  max(1, int(a["w"] * zoom)), max(1, int(a["h"] * zoom)))
@@ -159,7 +199,7 @@ def annotation_font(base: QFont, text: str, inner: QRect) -> QFont:
     return font
 
 
-def draw_annotation(p: QPainter, a: dict, r: QRect):
+def draw_annotation(p: QPainter, a: dict, r: QRect, zoom: float = 1.0):
     """Paint one text annotation into `r`.
 
     Lives here rather than in the canvas so the slide written onto a card
@@ -173,9 +213,20 @@ def draw_annotation(p: QPainter, a: dict, r: QRect):
     text = (a.get("text") or "").strip()
     p.save()
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(_ANNOT_BG)
-    p.drawRect(r)
-    if text:
+    if a.get("bg", True):
+        p.setBrush(_ANNOT_BG)
+        p.drawRect(r)
+    if text and a.get("size"):
+        # sized text: the size, weight and colour chosen in the format bar
+        px, py = annotation_pad(a)
+        inner = QRectF(r).adjusted(px * zoom, py * zoom, -px * zoom, -py * zoom)
+        flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        if not a.get("auto"):
+            flags |= Qt.TextFlag.TextWordWrap
+        p.setFont(annotation_text_font(p.font(), a, zoom))
+        p.setPen(QColor(a.get("color") or ANNOT_COLORS[0]))
+        p.drawText(inner, int(flags), text)
+    elif text:
         flags = (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                  | Qt.TextFlag.TextWordWrap)
         inner = r.adjusted(4, 2, -4, -2)
@@ -448,6 +499,140 @@ class _Box:
 
 # ---------------------------------------------------------- OcclusionCanvas
 
+def _night() -> bool:
+    try:
+        from aqt.theme import theme_manager
+        return bool(theme_manager.night_mode)
+    except Exception:   # noqa: BLE001
+        return False
+
+
+class _Swatch(QToolButton):
+    """A round colour chip; a ring shows the one in use."""
+
+    def __init__(self, color: str, parent=None):
+        super().__init__(parent)
+        self.color = color
+        self.setCheckable(True)
+        self.setFixedSize(26, 26)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c = QRectF(self.rect()).center()
+        if self.isChecked():
+            p.setPen(QPen(QColor(self.color), 1.6))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(c, 10.5, 10.5)
+        p.setPen(QPen(QColor(255, 255, 255, 90 if _night() else 0), 1))
+        p.setBrush(QColor(self.color))
+        p.drawEllipse(c, 7, 7)
+        p.end()
+
+
+class _GlyphButton(QToolButton):
+    """A format button drawn as a glyph: small A, large A, bold B, or the
+    white chip that stands for the text's background."""
+
+    def __init__(self, kind: str, parent=None, checkable=False):
+        super().__init__(parent)
+        self.kind = kind
+        self.setCheckable(checkable)
+        self.setFixedSize(30, 26)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAutoRaise(True)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        night = _night()
+        ink = QColor("#e8e8ed" if night else "#1d1d1f")
+        r = QRectF(self.rect())
+        if self.isChecked() or self.underMouse():
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(255, 255, 255, 30) if night else QColor(0, 0, 0, 18 if self.underMouse() and not self.isChecked() else 26))
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 6, 6)
+        f = QFont(self.font())
+        if self.kind in ("smaller", "larger", "bold"):
+            f.setPixelSize({"smaller": 11, "larger": 16, "bold": 15}[self.kind])
+            f.setBold(self.kind == "bold")
+            p.setFont(f)
+            p.setPen(ink)
+            p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), "B" if self.kind == "bold" else "A")
+        elif self.kind == "bg":
+            box = QRectF(r.center().x() - 8, r.center().y() - 7, 16, 14)
+            p.setPen(QPen(ink, 1.2))
+            p.setBrush(QColor(255, 255, 255) if self.isChecked() else Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(box, 3, 3)
+            if not self.isChecked():
+                p.setPen(QPen(ink, 1.2, Qt.PenStyle.DotLine))
+                p.drawLine(box.bottomLeft(), box.topRight())
+            f.setPixelSize(10); f.setBold(True); p.setFont(f)
+            p.setPen(QColor("#141414") if self.isChecked() else ink)
+            p.drawText(box, int(Qt.AlignmentFlag.AlignCenter), "T")
+        p.end()
+
+
+class _TextBar(QFrame):
+    """Format bar that floats above the selected text box. It only exists
+    while a text box is selected, so the Text tool itself stays one click."""
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.canvas = canvas
+        self.setObjectName("textBar")
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(5, 4, 5, 4)
+        row.setSpacing(1)
+        self.smaller = _GlyphButton("smaller", self)
+        self.larger = _GlyphButton("larger", self)
+        self.bold = _GlyphButton("bold", self, checkable=True)
+        self.bg = _GlyphButton("bg", self, checkable=True)
+        self.smaller.setToolTip("Smaller")
+        self.larger.setToolTip("Larger")
+        self.bold.setToolTip("Bold")
+        self.bg.setToolTip("Background")
+        for b in (self.smaller, self.larger, self.bold):
+            row.addWidget(b)
+        row.addSpacing(6)
+        self.swatches = []
+        for c in ANNOT_COLORS:
+            sw = _Swatch(c, self)
+            sw.clicked.connect(lambda _=False, c=c: canvas._format_annot(color=c))
+            row.addWidget(sw)
+            self.swatches.append(sw)
+        row.addSpacing(6)
+        row.addWidget(self.bg)
+        self.smaller.clicked.connect(lambda: canvas._format_annot(step=-1))
+        self.larger.clicked.connect(lambda: canvas._format_annot(step=1))
+        self.bold.clicked.connect(lambda: canvas._format_annot(bold="toggle"))
+        self.bg.clicked.connect(lambda: canvas._format_annot(bg="toggle"))
+        self.restyle()
+        self.hide()
+
+    def restyle(self):
+        night = _night()
+        self.setStyleSheet(
+            "#textBar{background:%s; border:1px solid %s; border-radius:9px;}"
+            % (("#2c2c2e", "#3a3a3c") if night else ("#ffffff", "#d9d9de")))
+
+    def show_for(self, a: dict):
+        state = (bool(a.get("bold")), bool(a.get("bg", True)), (a.get("color") or "").lower())
+        if state == getattr(self, "_state", None):
+            return      # nothing changed: touching the buttons would repaint the slide
+        self._state = state
+        self.bold.setChecked(bool(a.get("bold")))
+        self.bg.setChecked(bool(a.get("bg", True)))
+        for sw in self.swatches:
+            sw.setChecked(sw.color.lower() == (a.get("color") or ANNOT_COLORS[0]).lower())
+            sw.update()
+        self.adjustSize()
+
+
 class OcclusionCanvas(QWidget):
     # Emitted whenever boxes change so the dialog can update the card counter
     boxes_changed = pyqtSignal()
@@ -503,6 +688,7 @@ class OcclusionCanvas(QWidget):
         self._annot_resize: Optional[tuple] = None   # (annot, corner)
         self._annot_press: Optional[tuple] = None    # (annot, ipos, moved)
         self._editor: Optional[QTextEdit] = None
+        self._textbar: Optional[_TextBar] = None
         self._editing: Optional[tuple] = None        # ("annot"|"label", id)
         self._draw_shift = False        # Shift held when the draw started
         self._drag_start: Optional[QPointF] = None
@@ -662,9 +848,53 @@ class OcclusionCanvas(QWidget):
             ed.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             ed.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
             ed.installEventFilter(self)
+            ed.textChanged.connect(self._on_editor_text)
             ed.hide()
             self._editor = ed
         return self._editor
+
+    def _default_text_size(self) -> int:
+        """Body-text size of a slide, in image px."""
+        return max(8, round((self._orig_h or 600) * 0.034))
+
+    def _sized(self, a: dict) -> dict:
+        """Give a text box made before sizes existed the size it shows at, so
+        formatting it never makes it jump."""
+        if not a.get("size"):
+            r = annotation_rect(a, 1.0)
+            font = annotation_font(self.font(), a.get("text") or "X", r.adjusted(4, 2, -4, -2))
+            a["size"] = max(6, font.pixelSize())
+            a["auto"] = False
+            layout_annotation(a, self.font())
+        return a
+
+    def _style_editor(self, a: dict):
+        """Make the editor look exactly like the finished text."""
+        ed = self._editor_widget()
+        px, py = annotation_pad(a)
+        d = self._disp
+        bg = "#ffffff" if a.get("bg", True) else "transparent"
+        ed.setStyleSheet(
+            "QTextEdit{background:%s; color:%s; border:1px dashed %s;"
+            " padding:%dpx %dpx;}" % (bg, a.get("color") or ANNOT_COLORS[0],
+                                      _ANNOT_HINT.name(), max(0, round(py * d) - 1),
+                                      max(0, round(px * d) - 1)))
+        ed.setFont(annotation_text_font(self.font(), a, d))
+        ed.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap if a.get("auto")
+                           else QTextEdit.LineWrapMode.WidgetWidth)
+        ed.setGeometry(annotation_rect(a, d))
+
+    def _on_editor_text(self):
+        """Typing reflows the box as you go."""
+        if not self._editing or self._editing[0] != "annot":
+            return
+        a = self._annot_by_id(self._editing[1])
+        if a is None or not a.get("size"):
+            return
+        a["text"] = self._editor.toPlainText()
+        layout_annotation(a, self.font())
+        self._editor.setGeometry(annotation_rect(a, self._disp))
+        self._sync_textbar()
 
     def _begin_edit(self, kind: str, ident: str):
         self._commit_edit()
@@ -672,13 +902,23 @@ class OcclusionCanvas(QWidget):
             a = self._annot_by_id(ident)
             if a is None:
                 return
-            r = annotation_rect(a, self._disp)
-            text = a.get("text", "")
-            inner = r.adjusted(4, 2, -4, -2)
-            font = annotation_font(self.font(), text or "X", inner)
-            css = ("background:#ffffff; color:#141414; border:1px solid %s;"
-                   % _ANNOT_HINT.name())
-            align = Qt.AlignmentFlag.AlignLeft
+            self._sized(a)
+            self._edit_orig = a.get("text", "")
+            ed = self._editor_widget()
+            ed.document().setDocumentMargin(0)
+            self._editing = (kind, ident)
+            ed.blockSignals(True)
+            ed.setPlainText(a.get("text", ""))
+            ed.blockSignals(False)
+            self._style_editor(a)
+            ed.selectAll()
+            ed.show()
+            ed.raise_()
+            ed.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._annot_sel = ident
+            self._sync_textbar()
+            self.update()
+            return
         else:
             box = next((b for b in self._boxes if b.id == ident), None)
             if box is None:
@@ -694,6 +934,7 @@ class OcclusionCanvas(QWidget):
             align = Qt.AlignmentFlag.AlignCenter
 
         ed = self._editor_widget()
+        ed.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         ed.setStyleSheet(css)
         ed.setFont(font)
         ed.setPlainText(text)
@@ -726,8 +967,9 @@ class OcclusionCanvas(QWidget):
             if a is None:
                 return
             if text:
-                if a.get("text", "") != text:
-                    a["text"] = text
+                a["text"] = text
+                layout_annotation(a, self.font())
+                if getattr(self, "_edit_orig", None) != text:
                     self.annotations_changed.emit()
             else:
                 self._annots = [x for x in self._annots if x["id"] != ident]
@@ -745,6 +987,19 @@ class OcclusionCanvas(QWidget):
             elif ev.type() == QEvent.Type.KeyPress:
                 k = ev.key()
                 mods = ev.modifiers()
+                cmd = mods & (Qt.KeyboardModifier.ControlModifier
+                              | Qt.KeyboardModifier.MetaModifier)
+                if self._editing[0] == "annot" and cmd:
+                    # the format bar's buttons, from the keyboard
+                    if k == Qt.Key.Key_B:
+                        self._format_annot(bold="toggle")
+                        return True
+                    if k in (Qt.Key.Key_Greater, Qt.Key.Key_Period) and mods & Qt.KeyboardModifier.ShiftModifier:
+                        self._format_annot(step=1)
+                        return True
+                    if k in (Qt.Key.Key_Less, Qt.Key.Key_Comma) and mods & Qt.KeyboardModifier.ShiftModifier:
+                        self._format_annot(step=-1)
+                        return True
                 if k == Qt.Key.Key_Escape or (
                         k in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
                         and mods & (Qt.KeyboardModifier.ControlModifier
@@ -759,6 +1014,61 @@ class OcclusionCanvas(QWidget):
                     self.setFocus()
                     return True
         return super().eventFilter(obj, ev)
+
+    # ---------------------------------------------------------- format bar
+    def _sync_textbar(self):
+        """Show the format bar above the selected text box, or hide it."""
+        a = self._annot_by_id(self._annot_sel) if (self._tool == "text" and self._annot_sel) else None
+        if a is None or not self.isVisible():
+            if self._textbar is not None and self._textbar.isVisible():
+                self._textbar.hide()
+            return
+        if self._textbar is None:
+            self._textbar = _TextBar(self)
+        bar = self._textbar
+        if not bar.isVisible():
+            bar.restyle()
+        bar.show_for(a)
+        r = annotation_rect(a, self._disp)
+        x = r.center().x() - bar.width() // 2
+        y = r.top() - bar.height() - 10
+        if y < 4:
+            y = r.bottom() + 10
+        x = max(4, min(x, self.width() - bar.width() - 4))
+        if bar.pos() != QPoint(x, y):
+            bar.move(x, y)
+        if not bar.isVisible():
+            bar.show()
+            bar.raise_()
+
+    def _format_annot(self, step: int = 0, bold=None, color=None, bg=None):
+        """Apply a format-bar change to the selected text box."""
+        a = self._annot_by_id(self._annot_sel) if self._annot_sel else None
+        if a is None:
+            return
+        self._sized(a)
+        if step:
+            # sizes step by about an eighth, so a few clicks cover title to footnote
+            size = float(a["size"])
+            a["size"] = max(6, round(size * (1.125 if step > 0 else 1 / 1.125)))
+            if a["size"] == round(size):
+                a["size"] += 1 if step > 0 else -1
+        if bold == "toggle":
+            a["bold"] = not a.get("bold")
+        if color:
+            a["color"] = color
+        if bg == "toggle":
+            a["bg"] = not a.get("bg", True)
+        if self._editing and self._editing[0] == "annot" and self._editing[1] == a["id"]:
+            a["text"] = self._editor.toPlainText()
+            layout_annotation(a, self.font())
+            self._style_editor(a)
+            self._editor.setFocus()
+        else:
+            layout_annotation(a, self.font())
+        self.annotations_changed.emit()
+        self._sync_textbar()
+        self.update()
 
     def _commit_annots(self):
         self.annotations_changed.emit()
@@ -1143,6 +1453,13 @@ class OcclusionCanvas(QWidget):
         return self._scaled
 
     def paintEvent(self, _event):
+        if not getattr(self, "_bar_sync_queued", False):
+            self._bar_sync_queued = True
+
+            def _go():
+                self._bar_sync_queued = False
+                self._sync_textbar()
+            QTimer.singleShot(0, _go)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -1159,7 +1476,7 @@ class OcclusionCanvas(QWidget):
         for a in self._annots:
             r = annotation_rect(a, self._disp)
             if a["id"] != editing_id:
-                draw_annotation(p, a, r)
+                draw_annotation(p, a, r, self._disp)
             if self._tool == "text":
                 # only while the tool is up, so they read as slide content
                 # the rest of the time
@@ -1557,6 +1874,16 @@ class OcclusionCanvas(QWidget):
             else:             y1 = ip.y()
             a["x"], a["y"] = int(min(x0, x1)), int(min(y0, y1))
             a["w"], a["h"] = max(12, int(abs(x1 - x0))), max(10, int(abs(y1 - y0)))
+            if a.get("size"):
+                a["auto"] = False      # dragged to a width: wrap inside it
+                if "t" in corner:
+                    bottom = y1
+                    layout_annotation(a, self.font())
+                    a["y"] = int(bottom - a["h"])
+                else:
+                    a["y"] = int(y0)
+                    layout_annotation(a, self.font())
+            self._sync_textbar()
             self.update()
             return
         if self._annot_press is not None:
@@ -1748,16 +2075,22 @@ class OcclusionCanvas(QWidget):
             if start is None or cur is None:
                 return
             x, y = min(start.x(), cur.x()), min(start.y(), cur.y())
-            w, h = abs(cur.x() - start.x()), abs(cur.y() - start.y())
-            if w >= 12 and h >= 10:
-                a = {"id": uuid.uuid4().hex, "x": int(x), "y": int(y),
-                     "w": int(w), "h": int(h), "text": ""}
-                self._annots.append(a)
-                self._annot_sel = a["id"]
-                self.annotations_changed.emit()
-                # straight into typing — that is the whole point of dragging
-                # one out, and an empty one removes itself if you type nothing
-                self._begin_edit("annot", a["id"])
+            w = abs(cur.x() - start.x())
+            size = self._default_text_size()
+            # a click starts a box that grows as you type; a drag sets the
+            # width it wraps at. Size, weight and colour live in the format bar.
+            auto = w < 24 / max(self._disp, 0.01)
+            a = {"id": uuid.uuid4().hex, "x": int(x),
+                 "y": int(y - (size * 0.7 if auto else 0)),
+                 "w": int(w), "h": 0, "text": "", "size": size,
+                 "auto": auto, "bold": False, "color": ANNOT_COLORS[0], "bg": True}
+            layout_annotation(a, self.font())
+            self._annots.append(a)
+            self._annot_sel = a["id"]
+            self.annotations_changed.emit()
+            # straight into typing — that is the whole point of dragging
+            # one out, and an empty one removes itself if you type nothing
+            self._begin_edit("annot", a["id"])
             return
 
         if self._scanning:
