@@ -33,7 +33,7 @@ from aqt.qt import (
 from . import card_builder
 
 
-_PURPLE = "#836EAA"
+_PURPLE = "#6e5aa8"
 PANEL_W = 306          # composer, right of the slide
 COLUMN_W = 178         # made-cards column, left of the slide
 _CHIP_CHARS = 78       # how much of a card's text a chip keeps
@@ -271,9 +271,9 @@ class ClozeComposer(QWidget):
         self._text.setMinimumHeight(120)
         root.addWidget(self._text, stretch=1)
 
-        hint = QLabel(f"{_native('Ctrl+Shift+C')} wraps the selection")
+        # no hint text in the panel (shortcuts are in the README); the empty label keeps the row's layout
+        hint = QLabel("")
         hint.setObjectName("clozeHint")
-        hint.setToolTip(f"{_native('Ctrl+Alt+Shift+C')} reuses the last number")
         # The button sits on the hint's line rather than getting a row of its
         # own: it belongs to the editor above, and the panel has no height to
         # spare before the Add button starts crowding Create All Cards.

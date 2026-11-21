@@ -13,6 +13,7 @@ the network, and goes out on the next start that has a connection. Set
 "usage_stats" to false in the add-on's config to send nothing.
 """
 import json
+import re
 import os
 import platform
 import sys
@@ -172,6 +173,8 @@ def watch_buttons(widget, window: str) -> None:
 
 def _label(b) -> str:
     text = (b.text() or "").replace("&", "").split("  ")[0].strip()
+    # labels that carry a count ("Create 12 cards", "Make boxes on 8 slides") are recorded once, without it
+    text = re.sub(r"\s*\d[\d,]*\s*", " ", text).strip()
     return (text or b.toolTip().split("(")[0].strip() or b.objectName() or "unnamed")[:60]
 
 
