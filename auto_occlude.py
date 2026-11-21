@@ -1032,6 +1032,8 @@ class Run:
         # "atomic" makes text cloze cards (paid) instead of occlusion boxes; slides the
         # card writer says are better tested by location come back in self.occlude
         self.atomic = s.get("make") == "atomic"
+        self.quiz = s.get("make") == "quiz"
+        self.quiz_url = None
         self.on_page_cards = on_page_cards
         self.occlude: list = []
         self.notes = notes_text
@@ -1086,7 +1088,7 @@ class Run:
             except Exception:       # noqa: BLE001 - a slide that can't be read is skipped
                 lines = []
             units = vision.units_for_slide(lines)
-            payload = (atomic_payload(local + 1, image, lines) if self.atomic
+            payload = (atomic_payload(local + 1, image, lines) if (self.atomic or self.quiz)
                        else vision.slide_payload(local + 1, image, units))
             self.prepared.append((gidx, local, image, lines, payload, units))
             self.progress.setValue(len(self.prepared))
@@ -1105,6 +1107,8 @@ class Run:
         whole = document_payload(self.dlg, doc, self.prepared, self.notes if self.s.get("use_notes") else "")
         body = {"slides": len(self.prepared), "lecture": lecture, "doc": whole,
                 "settings": {k: self.s[k] for k in SENT}}
+        if self.quiz:
+            body["kind"] = "quiz"
         # the server reads the whole document before the first batch
         in_background(lambda: call("/v1/jobs", body, self.token, 300), self._job_started)
 
@@ -1128,6 +1132,8 @@ class Run:
                 showWarning(str(err), parent=self.dlg, title="PDF Occlusion")
             return self.on_finish(self.made, self.dropped, self.done_slides, False)
         self.job, self.batch = res["job"], int(res.get("batch_size") or 6)
+        if self.quiz:
+            return self._make_quiz()
         what = (res.get("document") or {}).get("subject")
         if what:
             self.progress.setLabelText(f"Occluding: {what}…")
@@ -1173,6 +1179,27 @@ class Run:
             self._next()
         route = "atomic" if self.atomic else "batch"
         in_background(lambda: call(f"/v1/jobs/{self.job}/{route}", body, self.token, 300), done)
+
+    def _make_quiz(self):
+        """A quiz is written from the whole lecture in one request, then opened in the browser."""
+        self.progress.setLabelText("Writing the questions…")
+        body = {"slides": [{k: v for k, v in c[4].items() if not k.startswith("_")} for c in self.prepared[:100]],
+                "settings": {"style": self.s.get("quiz_style") or "step1",
+                             "count": int(self.s.get("quiz_count") or 20),
+                             "custom": self.s.get("custom") or ""}}
+
+        def done(res, err):
+            if err:
+                telemetry.track("auto_occlude_error", stage="quiz", status=getattr(err, "status", 0),
+                                message=str(err)[:200])
+                self.progress.close()
+                showWarning(f"The quiz could not be made: {err}", parent=self.dlg, title="PDF Occlusion")
+                return self.on_finish(self.made, self.dropped, self.done_slides, False)
+            self.quiz_url = res.get("url")
+            self.made = int(res.get("n_questions") or 0)
+            self.done_slides = len(self.prepared)
+            self._finish()
+        in_background(lambda: call(f"/v1/jobs/{self.job}/quiz", body, self.token, 900), done)
 
     def _finish(self):
         complete = not self.cancelled    # closing the progress window emits canceled
