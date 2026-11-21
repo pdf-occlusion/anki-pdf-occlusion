@@ -116,7 +116,7 @@ def _contains(r, w):
     return r[0] <= cx <= r[2] and r[1] <= cy <= r[3]
 
 
-def phrase_words(unit, text):
+def phrase_words(unit, text, img=None):
     """Consecutive words of `unit` matching `text` -> list of (line index, word)."""
     flat = [(k, w) for k, ln in enumerate(unit["lines"]) for w in ln["words"] if _norm(w["t"])]
     toks = [t for t in (_norm(t) for t in str(text).split()) if t]
@@ -160,8 +160,36 @@ def phrase_words(unit, text):
         part["x0"] = w["x0"] + (w["x1"] - w["x0"]) * (lo - a0) / n
         part["x1"] = w["x0"] + (w["x1"] - w["x0"]) * (hi - a0) / n
         part["_of"] = id(w)
+        if img is not None:
+            if lo > a0:
+                part["x0"] = _blank_col(img, part["x0"], w)
+            if hi < a1:
+                part["x1"] = _blank_col(img, part["x1"], w)
         out.append((k, part))
     return out
+
+
+def _blank_col(img, x, w):
+    """Move a cut inside a glued token to the nearest column with no ink (a gap between words or
+    glyphs), searching within a third of the token's width; character proportions alone misplace it
+    when the token holds wide glyphs such as long arrows."""
+    try:
+        g = img.convert("L")
+    except Exception:
+        return x
+    y0, y1 = int(w["y0"]), max(int(w["y0"]) + 1, int(w["y1"]))
+    span = (w["x1"] - w["x0"]) / 3
+    lo, hi = int(max(w["x0"], x - span)), int(min(w["x1"], x + span))
+    if hi - lo < 2:
+        return x
+    edge = [g.getpixel((int(w["x0"]), yy)) for yy in range(y0, y1, max(1, (y1 - y0) // 8))]
+    bg = sorted(edge)[len(edge) // 2]
+    best = None
+    for cx in range(lo, hi):
+        ink = sum(1 for yy in range(y0, y1, max(1, (y1 - y0) // 12)) if abs(g.getpixel((cx, yy)) - bg) > 60)
+        if ink == 0 and (best is None or abs(cx - x) < abs(best - x)):
+            best = cx
+    return float(best) if best is not None else x
 
 
 BULLETS = set("•◦▪▫●○■□►▸*·")
@@ -212,31 +240,106 @@ def pad(r, h, others, W, H):
     return [max(0, L), max(0, T), min(W, R), min(H, B)]
 
 
-def snap_region(r, img, W, H):
+def resolve_region(r, words, img, W, H):
+    """A rough picture/text region from the model -> a clean box.
+    Words mostly inside the region are covered whole; every other word is a wall the box stops short of;
+    with no words inside, the box shrinks to the ink within it (never grows past what the model drew)."""
+    x0, y0, x1, y1 = r
+    inside, others = [], []
+    for w in words:
+        ix = max(0, min(x1, w["x1"]) - max(x0, w["x0"])); iy = max(0, min(y1, w["y1"]) - max(y0, w["y0"]))
+        area = max(1e-6, (w["x1"] - w["x0"]) * (w["y1"] - w["y0"]))
+        (inside if ix * iy / area >= 0.5 else others).append(w)
+    if inside:
+        b = _bbox(inside)
+        h = sorted(w["y1"] - w["y0"] for w in inside)[len(inside) // 2]
+        return pad(b, h, others, W, H), True
+    shrunk = snap_region(r, img, W, H, grow=False)
+    c = _clip(shrunk, others)
+    return (c if c[2] - c[0] > 2 and c[3] - c[1] > 2 else shrunk), False
+
+
+def _clip(r, others):
+    """Pull the sides of r back so it overlaps no other word."""
+    x0, y0, x1, y1 = r
+    for o in others:
+        if o["x1"] <= x0 or o["x0"] >= x1 or o["y1"] <= y0 or o["y0"] >= y1:
+            continue
+        # cut on the side that loses the least area
+        cuts = [(o["x1"] - x0, "L"), (x1 - o["x0"], "R"), (o["y1"] - y0, "T"), (y1 - o["y0"], "B")]
+        d, side = min(cuts)
+        if side == "L": x0 = o["x1"]
+        elif side == "R": x1 = o["x0"]
+        elif side == "T": y0 = o["y1"]
+        else: y1 = o["y0"]
+    return [x0, y0, x1, y1]
+
+
+def snap_region(r, img, W, H, grow=True):
     """Tighten a rough region to the drawn content inside it (pixels that differ from the region's
-    border colour), then pad like text. Returns the rough region if nothing stands out."""
-    if img is None or img.isNull():
+    border colour). Uses only img.convert("L").getpixel/width/height, so a QImage adapter works too."""
+    if img is None:
         return r
+    g = img.convert("L")
     x0, y0, x1, y1 = (int(round(v)) for v in r)
-    mx, my = int(0.15 * (x1 - x0)), int(0.15 * (y1 - y0))
-    X0, Y0, X1, Y1 = max(0, x0 - mx), max(0, y0 - my), min(img.width(), x1 + mx), min(img.height(), y1 + my)
+    mx, my = (int(0.15 * (x1 - x0)), int(0.15 * (y1 - y0))) if grow else (0, 0)
+    X0, Y0, X1, Y1 = max(0, x0 - mx), max(0, y0 - my), min(g.width, x1 + mx), min(g.height, y1 + my)
     if X1 - X0 < 4 or Y1 - Y0 < 4:
         return r
-    step = max(1, int(max(X1 - X0, Y1 - Y0) / 200))     # sample at most ~200 px a side
-    def grey(x, y):
-        return qGray(img.pixel(x, y))
-    edge = [grey(x, Y0) for x in range(X0, X1, step)] + [grey(x, Y1 - 1) for x in range(X0, X1, step)]
+    step = max(1, int(max(X1 - X0, Y1 - Y0) / 200))
+    edge = [g.getpixel((x, Y0)) for x in range(X0, X1, step)] + [g.getpixel((x, Y1 - 1)) for x in range(X0, X1, step)]
     bg = sorted(edge)[len(edge) // 2]
     bx0 = by0 = 10 ** 9
     bx1 = by1 = -1
     for y in range(Y0, Y1, step):
         for x in range(X0, X1, step):
-            if abs(grey(x, y) - bg) > 40:
+            if abs(g.getpixel((x, y)) - bg) > 40:
                 bx0, by0, bx1, by1 = min(bx0, x), min(by0, y), max(bx1, x + step), max(by1, y + step)
-    if bx1 < 0 or (bx1 - bx0) * (by1 - by0) < 0.05 * (x1 - x0) * (y1 - y0):
+    if bx1 < 0 or (bx1 - bx0) * (by1 - by0) < 0.05 * max(1, (x1 - x0) * (y1 - y0)):
         return r
+    if not grow:
+        return [max(x0, bx0), max(y0, by0), min(x1, bx1), min(y1, by1)]
     h = max(8, 0.25 * min(bx1 - bx0, by1 - by0))
     return [max(0, bx0 - 0.3 * h), max(0, by0 - 0.3 * h), min(W, bx1 + 0.3 * h), min(H, by1 + 0.3 * h)]
+
+
+def _clean_edges(r, img):
+    """A vertical box edge that lands on ink (it would slice a letter) moves to the nearest blank
+    column within half a line height. r is [x, y, w, h]."""
+    if img is None:
+        return
+    g = img.convert("L")
+    x, y, w, h = r
+    y0, y1 = int(y + 0.15 * h), int(y + 0.85 * h)
+    if y1 - y0 < 3:
+        return
+    rows = range(y0, y1, max(1, (y1 - y0) // 10))
+    ref = sorted(g.getpixel((min(g.width - 1, max(0, int(x + w / 2))), yy)) for yy in (int(y + 1), int(y + h - 2)))
+    W = g.width
+
+    def inked(cx):
+        if cx < 0 or cx >= W:
+            return False
+        col = [g.getpixel((cx, yy)) for yy in rows]
+        bg = max(set(col), key=col.count)
+        return any(abs(v - bg) > 70 for v in col) and len({v // 32 for v in col}) > 1
+
+    reach = int(max(3, 0.5 * h))
+    for side in ("L", "R"):
+        cx = int(x) if side == "L" else int(x + w)
+        if not inked(cx):
+            continue
+        for d in range(1, reach):
+            for c in (cx - d, cx + d):
+                if not inked(c):
+                    if side == "L":
+                        r[2] = (x + w) - c; r[0] = c
+                    else:
+                        r[2] = c - r[0]
+                    break
+            else:
+                continue
+            break
 
 
 def _split_own(rects):
@@ -268,6 +371,9 @@ def _even_regions(cards, region_ids):
         for _c, g in groups:
             if len(g) < 2:
                 continue
+            ws = [r[2] for r in g]; hs = [r[3] for r in g]
+            if max(ws) > 1.6 * min(ws) or max(hs) > 1.6 * min(hs):
+                continue          # only boxes that are already nearly the same size
             w = max(r[2] for r in g); h = max(r[3] for r in g)
             for r in g:
                 cx, cy = r[0] + r[2] / 2, r[1] + r[3] / 2
@@ -292,13 +398,15 @@ def plan_to_boxes(plan, units, W, H, img=None):
                     spans = [ln["words"] for ln in u["lines"]]
                 elif isinstance(t, dict) and "unit" in t and "text" in t:
                     u = by_id[str(t["unit"]).strip()]
-                    pw = phrase_words(u, t["text"])
+                    pw = phrase_words(u, t["text"], img)
                     target = [w for _, w in pw]
                     spans = [[w for k2, w in pw if k2 == k] for k in sorted({k for k, _ in pw})]
                 elif isinstance(t, dict) and "region" in t:
                     x0, y0, x1, y1 = (float(v) for v in t["region"])
-                    rects.append(snap_region([max(0, x0), max(0, y0), min(W, x1), min(H, y1)], img, W, H))
-                    region_ids.add((len(cards), len(rects) - 1))
+                    box, had_text = resolve_region([max(0, x0), max(0, y0), min(W, x1), min(H, y1)], all_words, img, W, H)
+                    rects.append(box)
+                    if not had_text:      # only picture cells take part in evening out
+                        region_ids.add((len(cards), len(rects) - 1))
                     continue
                 else:
                     raise ValueError(f"bad target {t!r}")
@@ -323,7 +431,10 @@ def plan_to_boxes(plan, units, W, H, img=None):
             cards.append(([[r[0], r[1], r[2] - r[0], r[3] - r[1]] for r in rects], card.get("q", "")))
         else:
             dropped += 1
+    gray = img.convert("L") if img is not None else None   # converted once for every box
     for rects, _q in cards:
+        for r in rects:
+            _clean_edges(r, gray)
         _split_own(rects)
     _even_regions(cards, region_ids)
     _separate(cards)
@@ -332,6 +443,23 @@ def plan_to_boxes(plan, units, W, H, img=None):
         for r in rects:
             out.append({"x": r[0], "y": r[1], "w": r[2], "h": r[3], "group": g})
     return out, len(cards), dropped
+
+
+class _Gray:
+    """A QImage seen through the few PIL calls the geometry uses: convert("L"), getpixel, width, height."""
+    mode = "L"
+
+    def __init__(self, qimage):
+        self.q = qimage
+        self.width, self.height = qimage.width(), qimage.height()
+
+    def convert(self, _mode):
+        return self
+
+    def getpixel(self, xy):
+        x = min(self.width - 1, max(0, int(xy[0])))
+        y = min(self.height - 1, max(0, int(xy[1])))
+        return qGray(self.q.pixel(x, y))
 
 
 # ------------------------------------------------------------------ add-on glue
@@ -400,7 +528,7 @@ def boxes_for_page(page_plan, units, image, scale, next_group):
         for t in (c.get("hide") or []) if isinstance(c, dict) else []:
             if isinstance(t, dict) and "region" in t and scale and scale < 1:
                 t["region"] = [float(v) / scale for v in t["region"]]
-    raw, made, dropped = plan_to_boxes(plan, units, W, H, image)
+    raw, made, dropped = plan_to_boxes(plan, units, W, H, _Gray(image))
     out, groups = [], {}
     for b in raw:
         groups.setdefault(b["group"], []).append(b)
