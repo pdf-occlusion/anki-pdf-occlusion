@@ -77,6 +77,7 @@ DEFAULTS = {
     "density": "balanced",
     **{key: opts[0][0] for key, _, opts in MORE},
     "skip_admin": True, "custom": "", "use_notes": True, "scope": "empty",
+    "make": "occlusion", "quiz_style": "step1", "quiz_count": 20,
     "show_more": False,
 }
 # what the server gets with every batch
@@ -686,17 +687,88 @@ class SignIn:
 
 # ------------------------------------------------------------------ the window
 
+MAKES = [("occlusion", "Boxes"), ("atomic", "Cards"), ("quiz", "Quiz")]
+CARD_TEMPLATES = [
+    ("Step 1", ""),
+    ("Teach from zero", "I am new to this topic: start with what each term means and build up; plain words."),
+    ("High-yield only", "Only what boards test most; skip anything secondary."),
+]
+QUIZ_STYLES = [("step1", "Step 1"), ("shelf", "Shelf"), ("recall", "Quick recall")]
+
+
+def _preview(kind: str, size: int = 56):
+    """A tiny drawing of what each choice makes: a slide with boxes, a cloze card, a question."""
+    from aqt.qt import QIcon, QPainter, QPixmap, QColor, QPen, QRectF
+    from aqt.theme import theme_manager
+    night = theme_manager.night_mode
+    ink = QColor(220, 220, 225) if night else QColor(58, 58, 60)
+    mask = QColor(124, 124, 128)
+    accent = QColor(150, 128, 210) if night else QColor(110, 90, 168)
+    pm = QPixmap(size * 2, size * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QPen(ink, 1.6))
+    p.setBrush(QColor(0, 0, 0, 0))
+    if kind == "occlusion":
+        p.drawRoundedRect(QRectF(6, 12, size - 12, size - 24), 3, 3)
+        p.fillRect(QRectF(13, 20, 16, 6), mask)
+        p.fillRect(QRectF(13, 30, 22, 6), accent)
+        p.drawLine(33, 23, size - 13, 23)
+    elif kind == "atomic":
+        p.drawRoundedRect(QRectF(8, 14, size - 16, size - 28), 4, 4)
+        p.drawLine(15, 24, size - 15, 24)
+        p.drawLine(15, 32, 24, 32)
+        p.fillRect(QRectF(26, 29, 14, 6), accent)
+    else:
+        p.drawLine(10, 14, size - 10, 14)
+        for k in range(3):
+            y = 24 + k * 9
+            p.setBrush(accent if k == 1 else QColor(0, 0, 0, 0))
+            p.drawEllipse(QRectF(10, y - 3, 6, 6))
+            p.setBrush(QColor(0, 0, 0, 0))
+            p.drawLine(20, y, size - 14, y)
+    p.end()
+    return QIcon(pm)
+
+
 class AutoOccludeDialog(QDialog):
     """Settings, account and Start. Returns the chosen settings via .chosen."""
 
     def __init__(self, parent, has_notes: bool, slide_counts: dict, primary_qss: str):
         super().__init__(parent)
-        self.setWindowTitle("Auto-occlude")
+        self.setWindowTitle("Auto")
         self.setMinimumWidth(520)
         self.slide_counts = slide_counts
         self.chosen = None
         s = settings()
         root = QVBoxLayout(self)
+
+        # what to make: three large choices, each with a small picture of the result
+        from aqt.qt import QToolButton, QSize
+        makes = QHBoxLayout()
+        self.make_group = QButtonGroup(self)
+        self.make_group.setExclusive(True)
+        self.make_btns = {}
+        for value, label in MAKES:
+            b = QToolButton()
+            b.setText(label)
+            b.setIcon(_preview(value))
+            b.setIconSize(QSize(56, 56))
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            b.setCheckable(True)
+            b.setMinimumSize(132, 96)
+            b.setStyleSheet(
+                "QToolButton{border:1px solid palette(mid); border-radius:10px; padding:6px;}"
+                "QToolButton:checked{border:2px solid #6e5aa8;}")
+            b.setChecked(value == (s.get("make") or "occlusion"))
+            self.make_group.addButton(b)
+            self.make_btns[value] = b
+            b.toggled.connect(lambda on, v=value: on and self._set_make(v))
+            makes.addWidget(b)
+        makes.addStretch()
+        root.addLayout(makes)
 
         # account
         acct = QHBoxLayout()
@@ -734,7 +806,8 @@ class AutoOccludeDialog(QDialog):
             self.density_btns[value] = b
             seg.addWidget(b)
         seg.addStretch()
-        top.addRow("Cards", seg)
+        top.addRow("Amount", seg)
+        self._density_row = seg
 
         self.notes = QCheckBox("Use the notes PDF")
         self.notes.setChecked(bool(s["use_notes"]) and has_notes)
@@ -747,6 +820,27 @@ class AutoOccludeDialog(QDialog):
         self.custom.setPlainText(s["custom"])
         self.custom.setFixedHeight(64)
         top.addRow("Your instructions", self.custom)
+
+        self.templates = QComboBox()
+        for name, _text in CARD_TEMPLATES:
+            self.templates.addItem(name)
+        self.templates.activated.connect(
+            lambda i: self.custom.setPlainText(CARD_TEMPLATES[i][1]))
+        top.addRow("Style", self.templates)
+        self.quiz_style = QComboBox()
+        for value, label in QUIZ_STYLES:
+            self.quiz_style.addItem(label, value)
+        self.quiz_count = QComboBox()
+        for n in (10, 20, 30):
+            self.quiz_count.addItem(f"{n} questions", n)
+        self.quiz_count.setCurrentIndex(1)
+        qrow = QHBoxLayout()
+        qrow.addWidget(self.quiz_style)
+        qrow.addWidget(self.quiz_count)
+        qrow.addStretch()
+        top.addRow("Questions", qrow)
+        self._quiz_row = qrow
+        self._rows = top
         root.addLayout(top)
 
         # the rest, folded away until asked for
@@ -780,9 +874,45 @@ class AutoOccludeDialog(QDialog):
         self._show_more(bool(s.get("show_more")))
         self.balance = None
         self.free_pages = 50
+        self._set_make(s.get("make") if s.get("make") in dict(MAKES) else "occlusion")
         self._refresh()
         self._load_balance()
         telemetry.watch_buttons(self, "auto_occlude")
+
+    def _set_make(self, make: str):
+        """Show only what applies to the chosen output."""
+        self.make = make
+        boxes, cards, quiz = make == "occlusion", make == "atomic", make == "quiz"
+
+        def row(field, show):
+            label = self._rows.labelForField(field)
+            if label is not None:
+                label.setVisible(show)
+            if isinstance(field, QWidget):
+                field.setVisible(show)
+            else:
+                for i in range(field.count()):
+                    w = field.itemAt(i).widget()
+                    if w is not None:
+                        w.setVisible(show)
+        keep = self.scope.currentData()
+        options = SCOPES if boxes else [("all", "All slides"), ("current", "Only this slide")]
+        self.scope.blockSignals(True)
+        self.scope.clear()
+        for value, label in options:
+            self.scope.addItem(label, value)
+        values = [v for v, _ in options]
+        self.scope.setCurrentIndex(values.index(keep) if keep in values else 0)
+        self.scope.blockSignals(False)
+        row(self._density_row, boxes)
+        row(self.templates, cards)
+        row(self._quiz_row, quiz)
+        self.more_toggle.setVisible(boxes)
+        if not boxes:
+            self.more.setVisible(False)
+        self.start_btn.setText({"occlusion": "Make boxes", "atomic": "Make cards", "quiz": "Make quiz"}[make])
+        self._refresh()
+        self.adjustSize()
 
     def _show_more(self, on: bool):
         self.more.setVisible(on)
@@ -840,7 +970,10 @@ class AutoOccludeDialog(QDialog):
         if signed:
             left = self.balance.get("pages_left") if self.balance else None
             plan = (self.balance or {}).get("plan")
-            tail = "" if left is None else f", {left:,} page{'s' if left != 1 else ''} left"
+            tail = "" if left is None else f", {left:,} page{'s' if left != 1 else ''}"
+            quizzes = (self.balance or {}).get("quizzes_left")
+            if quizzes is not None:
+                tail += f", {quizzes} quiz{'zes' if quizzes != 1 else ''}"
             if plan in ("monthly", "yearly"):
                 tail = f", {plan} plan" + tail
             self.who.setText(f"{a.get('email') or 'Signed in'}{tail}")
@@ -849,10 +982,19 @@ class AutoOccludeDialog(QDialog):
         self.sign_btn.setText("Sign out" if signed else "Sign in")
         self.more_btn.setVisible(signed)
         n = self.slide_counts.get(self.scope.currentData(), 0)
-        self.start_btn.setText(f"Auto-occlude {n} slide{'s' if n != 1 else ''}")
-        left = self.balance.get("pages_left") if (signed and self.balance) else None
-        self.start_btn.setEnabled(signed and n > 0 and (left is None or n <= left))
-        short = signed and left is not None and n > left
+        make = getattr(self, "make", "occlusion")
+        plural = "s" if n != 1 else ""
+        self.start_btn.setText({"occlusion": f"Make boxes on {n} slide{plural}",
+                                "atomic": f"Make cards from {n} slide{plural}",
+                                "quiz": f"Make a quiz from {n} slide{plural}"}[make])
+        if make == "quiz":
+            left = (self.balance or {}).get("quizzes_left") if signed else None
+            need = 1
+        else:
+            left = self.balance.get("pages_left") if (signed and self.balance) else None
+            need = n
+        self.start_btn.setEnabled(signed and n > 0 and (left is None or need <= left))
+        short = signed and left is not None and need > left
         self.more_btn.setStyleSheet(
             "QPushButton{color:#c0392b;border:1.5px solid #c0392b;border-radius:6px;"
             "padding:5px 14px;font-weight:bold;}" if short else "")
@@ -865,6 +1007,9 @@ class AutoOccludeDialog(QDialog):
         s["use_notes"] = self.notes.isChecked()
         s["scope"] = self.scope.currentData()
         s["show_more"] = self.more.isVisible()
+        s["make"] = getattr(self, "make", "occlusion")
+        s["quiz_style"] = self.quiz_style.currentData()
+        s["quiz_count"] = self.quiz_count.currentData()
         return s
 
     def _accept(self):
