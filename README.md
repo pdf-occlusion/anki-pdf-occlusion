@@ -7,7 +7,7 @@
 
 **PDF Occlusion** is an Anki add-on that creates image occlusion cards directly from PDF lecture slides. No more importing one image at a time. Open any PDF (or several at once), draw boxes over what you want to memorize, and generate cards in bulk. Built for studying from slide-heavy lectures.
 
-![PDF Occlusion](screenshots/window.png)
+![PDF Occlusion](screenshots/demo.gif)
 
 ## Install
 
