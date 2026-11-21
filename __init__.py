@@ -230,7 +230,7 @@ def _after_hello(reply) -> None:
 
 
 # Bump to show the announcement again for something new.
-ANNOUNCEMENT = 1
+ANNOUNCEMENT = 2
 
 
 def _announce() -> None:
@@ -242,11 +242,13 @@ def _announce() -> None:
     _record_version("announcement", ANNOUNCEMENT)
     box = QMessageBox(mw)
     box.setWindowTitle("PDF Occlusion")
-    box.setText("New in PDF Occlusion: Auto-occlude")
+    box.setText("PDF Occlusion has a new look")
     box.setInformativeText(
-        "Open a PDF in PDF Occlusion and click Auto-occlude. It boxes the "
-        "slides for you, and you can change any box before making cards.\n\n"
-        "Your first 50 pages are free."
+        "Auto now makes three things from a PDF: boxes, cards, or a quiz "
+        "you can take on any device. Boxes are placed by looking at each "
+        "slide, the way you would draw them.\n\n"
+        "On the deck screen you can now review a whole slide at a time.\n\n"
+        "Your first 50 pages and 2 quizzes are free."
     )
     open_btn = box.addButton("Open PDF Occlusion", QMessageBox.ButtonRole.AcceptRole)
     box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
