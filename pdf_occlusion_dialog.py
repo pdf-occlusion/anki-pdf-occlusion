@@ -1500,8 +1500,21 @@ class PDFOcclusionDialog(QDialog):
         self._auto_replace = s["scope"] in ("all", "current")
         self._auto_btn.setEnabled(False)
         self._auto_run = auto_occlude.Run(self, pages, s, notes,
-                                          self._auto_page_boxes, self._auto_finished)
+                                          self._auto_page_boxes, self._auto_finished,
+                                          on_page_cards=self._auto_page_cards)
         self._auto_run.start()
+
+    def _auto_page_cards(self, idx, cards, run):
+        """Atomic mode: the card writer's cloze cards for one slide, filed like hand-written
+        ones (nothing reaches Anki until Create All Cards)."""
+        import uuid as _uuid
+        add = [{"uid": _uuid.uuid4().hex, "nid": None, "text": c["text"], "extra": "",
+                "slide": True, "page": idx} for c in cards if c.get("text")]
+        if add:
+            self._cloze_cards.setdefault(idx, []).extend(add)
+            run.made += len(add)
+            self._refresh_cloze_column()
+            self._refresh_count()
 
     def _auto_page_boxes(self, idx, units, image, scale, plan, run):
         old = self._boxes.get(idx, []) if idx != self._page_index else self._canvas.get_boxes()
@@ -1521,8 +1534,22 @@ class PDFOcclusionDialog(QDialog):
 
     def _auto_finished(self, made, dropped, slides, complete):
         telemetry.track("auto_occlude_done", cards=made, dropped=dropped, slides=slides, complete=complete)
+        run = self._auto_run
         self._auto_btn.setEnabled(bool(self._pages))
         self._auto_run = None
+        # atomic cards first, then the slides they said are better tested by location go
+        # straight through occlusion in the same sitting: no second trip to Auto-occlude
+        if complete and run is not None and run.atomic and run.occlude:
+            doc = self._doc_for_page(run.occlude[0])
+            pages = [(i, doc["path"], i - doc["start"], (lambda i=i: self._page_image(i)))
+                     for i in run.occlude if self._doc_for_page(i) is doc]
+            s = dict(run.s, make="occlusion")
+            self._auto_replace = False
+            self._auto_btn.setEnabled(False)
+            self._auto_run = auto_occlude.Run(self, pages, s, run.notes, self._auto_page_boxes,
+                                              self._auto_finished, on_page_cards=self._auto_page_cards)
+            QTimer.singleShot(0, self._auto_run.start)
+            return
         self._update_controls()
         self._refresh_count()
         if slides:

@@ -341,6 +341,20 @@ def _thumb(image: QImage, width: int = 900) -> str:
     return base64.b64encode(bytes(buf.data())).decode()
 
 
+def atomic_payload(n: int, image: QImage, lines: list) -> dict:
+    """One slide for the atomic card writer: the plain slide and its text."""
+    img = image
+    if img.width() * img.height() > MAX_PIXELS:
+        f = (MAX_PIXELS / (img.width() * img.height())) ** 0.5
+        img = img.scaled(int(img.width() * f), int(img.height() * f),
+                         Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    buf = QBuffer()
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    img.convertToFormat(QImage.Format.Format_RGB32).save(buf, "JPEG", 85)
+    return {"n": n, "media_type": "image/jpeg", "image": base64.b64encode(bytes(buf.data())).decode(),
+            "text": "\n".join(" ".join(w["t"] for w in ln["words"]) for ln in lines), "_scale": 1.0}
+
+
 def document_payload(dlg, doc: dict, prepared: list, notes: str) -> dict:
     """The whole PDF, for the server's first read: every page's text (the
     text layer; text recognition only where it already ran, on the slides
@@ -868,8 +882,13 @@ class AutoOccludeDialog(QDialog):
 class Run:
     """Prepare slides, then send them in batches; apply each batch's boxes."""
 
-    def __init__(self, dlg, pages: list, s: dict, notes_text: str, on_page_boxes, on_finish):
+    def __init__(self, dlg, pages: list, s: dict, notes_text: str, on_page_boxes, on_finish, on_page_cards=None):
         self.dlg, self.pages, self.s = dlg, pages, s
+        # "atomic" makes text cloze cards (paid) instead of occlusion boxes; slides the
+        # card writer says are better tested by location come back in self.occlude
+        self.atomic = s.get("make") == "atomic"
+        self.on_page_cards = on_page_cards
+        self.occlude: list = []
         self.notes = notes_text
         self.on_page_boxes, self.on_finish = on_page_boxes, on_finish
         self.token = account().get("token")
@@ -922,7 +941,9 @@ class Run:
             except Exception:       # noqa: BLE001 - a slide that can't be read is skipped
                 lines = []
             units = vision.units_for_slide(lines)
-            self.prepared.append((gidx, local, image, lines, vision.slide_payload(local + 1, image, units), units))
+            payload = (atomic_payload(local + 1, image, lines) if self.atomic
+                       else vision.slide_payload(local + 1, image, units))
+            self.prepared.append((gidx, local, image, lines, payload, units))
             self.progress.setValue(len(self.prepared))
         if len(self.prepared) < n:
             # keep rendering at full speed; only wait (briefly) when everything left is recognition
@@ -991,13 +1012,22 @@ class Run:
                 return self.on_finish(self.made, self.dropped, self.done_slides, False)
             self.queue.pop(0)
             pages = res.get("pages") or {}
-            for gidx, local, image, _lines, payload, units in chunk:
-                plan = pages.get(str(local + 1)) or pages.get(f"p{local + 1}") or {}
-                self.on_page_boxes(gidx, units, image, payload["_scale"], plan, self)
+            if self.atomic:
+                wanted = {int(n) for n in (res.get("occlude") or []) if str(n).isdigit()}
+                for gidx, local, _image, _lines, _payload, _units in chunk:
+                    if self.on_page_cards:
+                        self.on_page_cards(gidx, pages.get(str(local + 1)) or [], self)
+                    if local + 1 in wanted:
+                        self.occlude.append(gidx)
+            else:
+                for gidx, local, image, _lines, payload, units in chunk:
+                    plan = pages.get(str(local + 1)) or pages.get(f"p{local + 1}") or {}
+                    self.on_page_boxes(gidx, units, image, payload["_scale"], plan, self)
             self.done_slides += len(chunk)
             self.progress.setValue(len(self.pages) + self.done_slides)
             self._next()
-        in_background(lambda: call(f"/v1/jobs/{self.job}/batch", body, self.token, 180), done)
+        route = "atomic" if self.atomic else "batch"
+        in_background(lambda: call(f"/v1/jobs/{self.job}/{route}", body, self.token, 300), done)
 
     def _finish(self):
         complete = not self.cancelled    # closing the progress window emits canceled
