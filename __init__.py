@@ -242,14 +242,13 @@ def _announce() -> None:
     _record_version("announcement", ANNOUNCEMENT)
     box = QMessageBox(mw)
     box.setWindowTitle("PDF Occlusion")
-    box.setText("PDF Occlusion has a new look")
+    box.setText("PDF Occlusion updated")
     box.setInformativeText(
-        "Auto now makes three things from a PDF: boxes, cards, or a quiz "
-        "you can take on any device. Boxes are placed by looking at each "
-        "slide, the way you would draw them.\n\n"
-        "On the deck screen you can now review a whole slide at a time.\n\n"
-        "Your first 50 pages and 2 quizzes are free."
+        "A cleaner, faster window. Auto can now make boxes, cards or a quiz, "
+        "and the deck screen lets you review a whole slide at a time."
     )
+    from aqt.qt import QIcon
+    box.setIconPixmap(QIcon(os.path.join(os.path.dirname(__file__), "logo.svg")).pixmap(56, 56))
     open_btn = box.addButton("Open PDF Occlusion", QMessageBox.ButtonRole.AcceptRole)
     box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
     telemetry.track("announcement_shown", n=ANNOUNCEMENT)

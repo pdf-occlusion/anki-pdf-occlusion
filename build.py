@@ -51,6 +51,7 @@ ADDON_FILES = [
     "config.md",
     "manifest.json",
     "icon.svg",
+    "logo.svg",
     "caret.svg",
     "caret_muted.svg",
 ]
