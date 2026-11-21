@@ -44,6 +44,7 @@ ADDON_FILES = [
     "pdf_hosting.py",
     "auto_occlude.py",
     "vision.py",
+    "whole_slide.py",
     "telemetry.py",
     "version.py",
     "config.json",
