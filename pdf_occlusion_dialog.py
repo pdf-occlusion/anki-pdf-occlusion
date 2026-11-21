@@ -14,7 +14,8 @@ from aqt.qt import (
     QStyledItemDelegate, QStyle, QAbstractItemView, QShortcut, QKeySequence,
     Qt, QRect, QRectF, QPoint, QSize, QImage, QPixmap, QIcon, QColor, QPen,
     QFont, QFontMetrics, QPainter, QByteArray, QObject, QEvent,
-    QProgressDialog, QMenu, QDesktopServices, QUrl, QTimer,
+    QProgressDialog, QMenu, QDesktopServices, QUrl, QTimer, QSlider,
+    QWidgetAction,
 )
 from aqt.utils import askUser, showInfo, showWarning, tooltip
 
@@ -153,6 +154,11 @@ QPushButton#secondary:pressed {{ background:{c['btn_down']}; }}
 QPushButton#secondary:disabled {{ background:{c['off_bg']}; color:{c['off_fg']};
     border-color:{c['off_bg']}; }}
 
+QSlider::groove:horizontal {{ height:4px; border-radius:2px; background:{c['line']}; }}
+QSlider::sub-page:horizontal {{ height:4px; border-radius:2px; background:{c['accent']}; }}
+QSlider::handle:horizontal {{ width:16px; height:16px; margin:-6px 0; border-radius:8px;
+    background:#ffffff; border:1px solid {c['btn_line']}; }}
+
 QListWidget#rail {{ background:{c['window']}; border:none;
     border-right:1px solid {c['line']}; outline:0; }}
 QWidget#stage {{ background:{c['stage']}; }}
@@ -188,7 +194,47 @@ _ICONS = {
     "open": '<path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4.2l2 2.2H19a1.5 1.5 0 0 1 '
             '1.5 1.5V17a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17z"/>',
     "caret": '<path d="M8 10l4 4 4-4"/>',
+    "rail": '<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M9 5v14"/>',
+    "prev": '<path d="M14.5 6.5L9 12l5.5 5.5"/>',
+    "next": '<path d="M9.5 6.5L15 12l-5.5 5.5"/>',
+    "cards": '<rect x="7.5" y="4.5" width="12" height="9" rx="1.6"/>'
+             '<path d="M4.5 9v7.9c0 .9.7 1.6 1.6 1.6H15"/>',
 }
+
+
+class _CountButton(QPushButton):
+    """The primary button as an icon, with the number of cards it will make
+    in a small badge at its bottom-right."""
+
+    def __init__(self):
+        super().__init__()
+        self.count = 0
+
+    def set_count(self, n: int):
+        if n != self.count:
+            self.count = n
+            self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if not self.count or not self.isEnabled():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        f = QFont(self.font())
+        f.setPixelSize(10)
+        f.setBold(True)
+        p.setFont(f)
+        text = str(self.count) if self.count < 1000 else "999+"
+        w = max(15, QFontMetrics(f).horizontalAdvance(text) + 8)
+        r = QRectF(self.width() - w - 1, self.height() - 15, w, 14)
+        c = _colors()
+        p.setPen(QPen(QColor(c["accent"]), 1.2))
+        p.setBrush(QColor("#ffffff"))
+        p.drawRoundedRect(r, 7, 7)
+        p.setPen(QColor(c["accent"]))
+        p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), text)
+        p.end()
 
 
 def _svg_pixmap(name: str, color: str, size: int, dpr: float) -> QPixmap:
@@ -530,6 +576,13 @@ def _cfg(key, default):
     return cfg.get(key, default)
 
 
+def _set_cfg(key, value):
+    cfg = mw.addonManager.getConfig(__name__) or {}
+    if cfg.get(key) != value:
+        cfg[key] = value
+        mw.addonManager.writeConfig(__name__, cfg)
+
+
 def _log_error(report: str) -> str:
     """Save a traceback to user_files/last_error.txt; returns where it went."""
     path = os.path.join(os.path.dirname(__file__), "user_files",
@@ -818,10 +871,28 @@ class PDFOcclusionDialog(QDialog):
         self._title_btn.clicked.connect(self._show_popover)
         self._sub_label = QLabel()
         self._sub_label.setObjectName("subLabel")
+        def bar_btn(name, label, slot, checkable=False):
+            b = QToolButton()
+            b.setObjectName("barIcon")
+            b.setAccessibleName(label)
+            b.setIconSize(QSize(20, 20))
+            b.setProperty("_icon", name)
+            b.setCheckable(checkable)
+            b.clicked.connect(slot)
+            return b
+
+        self._rail_btn = bar_btn("rail", "Slides", self._toggle_rail, checkable=True)
+        self._rail_btn.setChecked(bool(_cfg("show_slides", True)))
+        self._prev_btn = bar_btn("prev", "Previous slide", self._prev_page)
+        self._next_btn = bar_btn("next", "Next slide", self._next_page)
         left.addWidget(self._open_btn)
+        left.addWidget(self._rail_btn)
         left.addSpacing(4)
         left.addWidget(self._title_btn)
         left.addWidget(self._sub_label)
+        left.addSpacing(2)
+        left.addWidget(self._prev_btn)
+        left.addWidget(self._next_btn)
         left.addStretch(1)
 
         seg = QFrame()
@@ -858,15 +929,24 @@ class PDFOcclusionDialog(QDialog):
         self._zoom_label.setMinimumWidth(48)
         self._zoom_label.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         zoom_menu = QMenu(self)
-        self._zoom_in_act = zoom_menu.addAction("Zoom In", self._zoom_in)
-        self._zoom_in_act.setShortcut(QKeySequence("Ctrl+="))
-        self._zoom_out_act = zoom_menu.addAction("Zoom Out", self._zoom_out)
-        self._zoom_out_act.setShortcut(QKeySequence("Ctrl+-"))
-        self._fit_act = zoom_menu.addAction("Fit Slide", self._zoom_fit)
+        # a slider for any zoom, then Fit; Ctrl+= and Ctrl+- still step
+        holder = QWidget()
+        hrow = QHBoxLayout(holder)
+        hrow.setContentsMargins(14, 8, 14, 6)
+        self._zoom_slider = QSlider(Qt.Orientation.Horizontal)
+        self._zoom_slider.setRange(25, 400)
+        self._zoom_slider.setFixedWidth(200)
+        self._zoom_slider.valueChanged.connect(self._on_zoom_slider)
+        hrow.addWidget(self._zoom_slider)
+        slider_act = QWidgetAction(zoom_menu)
+        slider_act.setDefaultWidget(holder)
+        zoom_menu.addAction(slider_act)
+        zoom_menu.addSeparator()
+        self._fit_act = zoom_menu.addAction("Fit slide", self._zoom_fit)
         self._fit_act.setShortcut(QKeySequence("Ctrl+0"))
-        for act in (self._zoom_in_act, self._zoom_out_act, self._fit_act):
-            # the window-level QShortcuts below do the work; these only show it
-            act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        # the window-level QShortcut does the work; this only shows it
+        self._fit_act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        zoom_menu.aboutToShow.connect(self._sync_zoom_slider)
         self._zoom_label.setMenu(zoom_menu)
 
         self._auto_btn = QPushButton("Auto")
@@ -874,7 +954,10 @@ class PDFOcclusionDialog(QDialog):
         self._auto_btn.setIconSize(QSize(18, 18))
         self._auto_btn.clicked.connect(self._open_auto_occlude)
 
-        self._create_btn = QPushButton("Create cards")
+        self._create_btn = _CountButton()
+        self._create_btn.setAccessibleName("Create cards")
+        self._create_btn.setFixedSize(48, 34)
+        self._create_btn.setIconSize(QSize(20, 20))
         self._create_btn.setObjectName("primary")
         self._create_btn.setDefault(True)
         self._create_btn.clicked.connect(self._create_cards)
@@ -1086,7 +1169,10 @@ class PDFOcclusionDialog(QDialog):
         theme changes with the window open."""
         c = _colors()
         self.setStyleSheet(_window_qss(c))
-        self._create_btn.setStyleSheet(_primary_qss(c))
+        self._create_btn.setStyleSheet(_primary_qss(c) + "QPushButton{padding:0;}")
+        self._create_btn.setIcon(_icon("cards", c, 20, color="#ffffff"))
+        for b in (self._rail_btn, self._prev_btn, self._next_btn):
+            b.setIcon(_icon(b.property("_icon"), c))
         self._empty_open_btn.setStyleSheet(_primary_qss(c))
         for b in (self._draw_btn, self._select_btn, self._text_btn,
                   self._detect_btn, self._cloze_btn):
@@ -1343,7 +1429,7 @@ class PDFOcclusionDialog(QDialog):
         self._maybe_resume_sessions(silent=silent_resume)
 
         self._rail.reset_pages(self._page_sizes())
-        self._rail.setVisible(True)
+        self._rail.setVisible(self._rail_btn.isChecked())
         self._stack.setCurrentIndex(1)
         self._show_page()
         self._apply_default_zoom()
@@ -1538,6 +1624,22 @@ class PDFOcclusionDialog(QDialog):
         self._canvas.set_zoom(z)
         self._zoom_label.setText(f"{int(self._canvas.zoom() * 100)}%")
 
+    def _sync_zoom_slider(self):
+        self._zoom_slider.blockSignals(True)
+        self._zoom_slider.setValue(int(round(self._canvas.zoom() * 100)))
+        self._zoom_slider.blockSignals(False)
+
+    def _on_zoom_slider(self, value: int):
+        """Zoom about the middle of what is on screen, so the slider never
+        throws you to the corner of the slide."""
+        if not self._pages:
+            return
+        old = self._canvas.zoom()
+        vp = self._scroll.viewport()
+        centre = QPoint(self._scroll.horizontalScrollBar().value() + vp.width() // 2,
+                        self._scroll.verticalScrollBar().value() + vp.height() // 2)
+        self._on_zoom_gesture(value / 100 / old - 1, centre)
+
     def _zoom_in(self):
         z = self._canvas.zoom()
         bigger = [s for s in _ZOOM_STEPS if s > z + 0.01]
@@ -1651,6 +1753,23 @@ class PDFOcclusionDialog(QDialog):
     def _arrow(self, key, shift: bool):
         if self._pages:
             self._canvas.handle_arrow(key, shift)
+
+    def _toggle_rail(self):
+        on = self._rail_btn.isChecked()
+        _set_cfg("show_slides", on)
+        if self._pages:
+            self._rail.setVisible(on)
+            if on:
+                self._rail.set_current(self._page_index)
+            self._refit()
+
+    def _sync_nav(self):
+        has = bool(self._pages)
+        self._rail_btn.setEnabled(has)
+        self._prev_btn.setVisible(has)
+        self._next_btn.setVisible(has)
+        self._prev_btn.setEnabled(has and self._page_index > 0)
+        self._next_btn.setEnabled(has and self._page_index < len(self._pages) - 1)
 
     def _on_slide_nav(self, direction: int):
         self._next_page() if direction > 0 else self._prev_page()
@@ -1863,19 +1982,20 @@ class PDFOcclusionDialog(QDialog):
         cloze together. It stays live at zero when there are cards out there
         to update or delete (all boxes on a slide removed, say)."""
         if not self._pages:
-            self._create_btn.setText("Create cards")
+            self._create_btn.set_count(0)
             self._create_btn.setToolTip("")
             self._create_btn.setEnabled(False)
+            self._sync_nav()
             return
         occlusion = self._expected_cards()
         cloze = self._cloze_cards_total()
         n = occlusion + cloze
-        self._create_btn.setText(
-            f"Create {n} card{'s' if n != 1 else ''}" if n else "Create cards")
+        self._create_btn.set_count(n)
         self._create_btn.setToolTip(
             f"{occlusion} occlusion, {cloze} cloze" if cloze else "")
         pending = bool(self._cloze_stale) or any(d.get("note_map") for d in self._docs)
         self._create_btn.setEnabled(bool(n) or pending)
+        self._sync_nav()
         self._rail.refresh_row(self._page_index)
 
     def _update_controls(self):

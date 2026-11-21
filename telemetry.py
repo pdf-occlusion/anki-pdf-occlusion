@@ -175,7 +175,8 @@ def _label(b) -> str:
     text = (b.text() or "").replace("&", "").split("  ")[0].strip()
     # labels that carry a count ("Create 12 cards", "Make boxes on 8 slides") are recorded once, without it
     text = re.sub(r"\s*\d[\d,]*\s*", " ", text).strip()
-    return (text or b.toolTip().split("(")[0].strip() or b.objectName() or "unnamed")[:60]
+    return (text or b.accessibleName() or b.toolTip().split("(")[0].strip()
+            or b.objectName() or "unnamed")[:60]
 
 
 def addon_dir_id():
