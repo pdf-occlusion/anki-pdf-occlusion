@@ -1499,6 +1499,8 @@ class PDFOcclusionDialog(QDialog):
         notes = self._auto_notes_text(doc) if s.get("use_notes") else ""
         self._auto_replace = s["scope"] in ("all", "current")
         self._auto_btn.setEnabled(False)
+        if _cfg("try_atomic", False):     # temporary switch until the redesign gives atomic cards a button
+            s = dict(s, make="atomic")
         self._auto_run = auto_occlude.Run(self, pages, s, notes,
                                           self._auto_page_boxes, self._auto_finished,
                                           on_page_cards=self._auto_page_cards)
