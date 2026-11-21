@@ -1,15 +1,20 @@
 import os
+import webbrowser
+import time
 import traceback
 import uuid
 from typing import Optional
 
-from aqt import mw
+from aqt import mw, gui_hooks
 from aqt.theme import theme_manager
 from aqt.qt import (
-    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton, QLabel,
-    QLineEdit, QComboBox, QFileDialog, QScrollArea, QShortcut, QKeySequence,
-    Qt, QRect, QImage, QPainter, QProgressDialog, QMenu,
-    QDesktopServices, QUrl, QTimer,
+    QDialog, QWidget, QFrame, QVBoxLayout, QHBoxLayout, QFormLayout,
+    QStackedWidget, QPushButton, QToolButton, QLabel, QLineEdit, QComboBox,
+    QFileDialog, QScrollArea, QListWidget, QListWidgetItem,
+    QStyledItemDelegate, QStyle, QAbstractItemView, QShortcut, QKeySequence,
+    Qt, QRect, QRectF, QPoint, QSize, QImage, QPixmap, QIcon, QColor, QPen,
+    QFont, QFontMetrics, QPainter, QByteArray, QObject, QEvent,
+    QProgressDialog, QMenu, QDesktopServices, QUrl, QTimer,
 )
 from aqt.utils import askUser, showInfo, showWarning, tooltip
 
@@ -27,98 +32,484 @@ from .card_builder import (ensure_note_type, create_occlusion_notes,
 from . import ocr
 from . import telemetry
 from .pdf_renderer import (render_pdf, LazyPages, get_text_word_rects, get_page_text,
-                           get_table_cell_rects, merge_word_rects)
+                           get_table_cell_rects, merge_word_rects, _render_page)
 
 
 _ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
 
-# purple
-_NU_PURPLE = "#4E2A84"
+# Room left round a fitted slide, so its shadow shows (logical px, each side).
+_FIT_MARGIN = 24
 
-def _accent_color() -> str:
-    """Purple accent readable on the current Anki theme."""
+
+# ------------------------------------------------------------------ look --
+#
+# Neutral greys everywhere; purple only where it means something: the one
+# primary action (Create N cards) and, on the slide, the selected box. Every
+# colour has a light and a night value, picked from Anki's own theme.
+
+def _night() -> bool:
     try:
-        night = theme_manager.night_mode
+        return bool(theme_manager.night_mode)
     except Exception:
-        night = False
-    return "#B6ACD1" if night else _NU_PURPLE
+        return False
 
 
-# One purple for the two primary actions (Open PDF / Create All Cards);
-# everything else stays quiet so the dialog reads light and uncluttered.
-_PRIMARY_BTN_QSS = (
-    "QPushButton{background:#836EAA;color:white;font-weight:bold;"
-    "padding:6px 18px;border-radius:6px;border:none;}"
-    "QPushButton:hover{background:#75619b;}"
-    "QPushButton:pressed{background:#67548c;}"
-    "QPushButton:disabled{background:#b5b2ba;color:#efefef;}"
-)
+_LIGHT = {
+    "window": "#fbfbfd", "line": "#e3e3e8", "stage": "#ececf0",
+    "text": "#1d1d1f", "sub": "#86868b", "icon": "#3a3a3c", "icon_off": "#b8b8bd",
+    "seg": "#e8e8ed", "seg_on": "#ffffff", "seg_on_line": "#d6d6dc",
+    "hover": "rgba(0,0,0,0.06)",
+    "btn": "#ffffff", "btn_line": "#d2d2d7", "btn_hover": "#f4f4f7",
+    "btn_down": "#e8e8ed",
+    "accent": "#6e5aa8", "accent_hover": "#634f9c", "accent_down": "#574590",
+    "off_bg": "#e8e8ed", "off_fg": "#a1a1a6",
+    "rail_on": "#dcd6ee", "pill": QColor(0, 0, 0, 115),
+    "placeholder": "#ffffff", "shadow": 26,
+}
+_DARK = {
+    "window": "#2a2a2c", "line": "#3a3a3d", "stage": "#1e1e20",
+    "text": "#f2f2f7", "sub": "#98989d", "icon": "#e5e5ea", "icon_off": "#636366",
+    "seg": "#3a3a3d", "seg_on": "#636366", "seg_on_line": "#6e6e73",
+    "hover": "rgba(255,255,255,0.08)",
+    "btn": "#3a3a3d", "btn_line": "#4a4a4e", "btn_hover": "#434347",
+    "btn_down": "#4d4d52",
+    "accent": "#7461b0", "accent_hover": "#7f6cbb", "accent_down": "#6956a3",
+    "off_bg": "#3a3a3d", "off_fg": "#6e6e73",
+    "rail_on": "#433b5e", "pill": QColor(0, 0, 0, 140),
+    "placeholder": "#d8d8dc", "shadow": 90,
+}
 
-# Split button: main area opens the file picker, the arrow lists recent
-# sessions. Same purple as the primary buttons. Qt's stock menu arrow is
-# huge, so a small bundled caret.svg replaces it.
+
+def _colors() -> dict:
+    return _DARK if _night() else _LIGHT
+
+
+def _primary_qss(c: Optional[dict] = None) -> str:
+    """The one solid purple button. Disabled is a plain grey, never a pale
+    purple, so it can't be mistaken for the live button."""
+    c = c or _colors()
+    return (
+        f"QPushButton{{background:{c['accent']};color:white;font-weight:600;"
+        f"padding:0 14px;min-height:30px;border-radius:7px;"
+        f"border:1px solid {c['accent']};}}"
+        f"QPushButton:hover{{background:{c['accent_hover']};"
+        f"border-color:{c['accent_hover']};}}"
+        f"QPushButton:pressed{{background:{c['accent_down']};"
+        f"border-color:{c['accent_down']};}}"
+        f"QPushButton:disabled{{background:{c['off_bg']};color:{c['off_fg']};"
+        f"border-color:{c['off_bg']};}}"
+    )
+
+
+# Kept for anything that still imports it; the window itself uses
+# _primary_qss(), which follows the theme.
+_PRIMARY_BTN_QSS = _primary_qss(_LIGHT)
+
+
+def _window_qss(c: dict) -> str:
+    """Everything in the window, by object name. The bare QPushButton rule
+    reaches child windows too (Auto, the cloze panel), so it stays quiet."""
+    return f"""
+QPushButton {{ padding:5px 14px; border-radius:6px;
+    border:1px solid rgba(127,127,127,0.35); background:transparent; }}
+QPushButton:hover {{ background:{c['hover']}; }}
+QPushButton:pressed {{ background:rgba(127,127,127,0.20); }}
+QPushButton:disabled {{ color:{c['off_fg']}; border-color:rgba(127,127,127,0.18); }}
+
+QDialog#pdfOcclusion {{ background:{c['window']}; }}
+QFrame#topBar {{ background:{c['window']}; border:none;
+    border-bottom:1px solid {c['line']}; }}
+
+QPushButton#titleBtn {{ border:none; background:transparent; color:{c['text']};
+    font-size:14px; font-weight:600; padding:4px 6px; border-radius:6px;
+    text-align:left; }}
+QPushButton#titleBtn:hover {{ background:{c['hover']}; }}
+QLabel#subLabel {{ color:{c['sub']}; font-size:14px; }}
+
+QToolButton#barIcon {{ border:none; background:transparent; border-radius:6px;
+    padding:4px; }}
+QToolButton#barIcon:hover, QToolButton#barIcon:pressed {{ background:{c['hover']}; }}
+QToolButton#barIcon::menu-indicator {{ image:none; width:0; }}
+
+QFrame#seg {{ background:{c['seg']}; border:none; border-radius:8px; }}
+QToolButton#segBtn {{ border:1px solid transparent; background:transparent;
+    border-radius:6px; }}
+QToolButton#segBtn:hover {{ background:{c['hover']}; }}
+QToolButton#segBtn:checked {{ background:{c['seg_on']};
+    border:1px solid {c['seg_on_line']}; }}
+
+QToolButton#zoomBtn {{ border:none; background:transparent; color:{c['sub']};
+    padding:4px 4px; border-radius:6px; }}
+QToolButton#zoomBtn:hover {{ background:{c['hover']}; }}
+QToolButton#zoomBtn:disabled {{ color:{c['off_fg']}; }}
+QToolButton#zoomBtn::menu-indicator {{ image:none; width:0; }}
+
+QPushButton#secondary {{ background:{c['btn']}; color:{c['text']};
+    font-weight:500; padding:0 13px; min-height:30px; border-radius:7px;
+    border:1px solid {c['btn_line']}; }}
+QPushButton#secondary:hover {{ background:{c['btn_hover']}; }}
+QPushButton#secondary:pressed {{ background:{c['btn_down']}; }}
+QPushButton#secondary:disabled {{ background:{c['off_bg']}; color:{c['off_fg']};
+    border-color:{c['off_bg']}; }}
+
+QListWidget#rail {{ background:{c['window']}; border:none;
+    border-right:1px solid {c['line']}; outline:0; }}
+QWidget#stage {{ background:{c['stage']}; }}
+QScrollArea#stageScroll {{ background:{c['stage']}; border:none; }}
+
+QLabel#formLabel {{ color:{c['sub']}; }}
+QPushButton#notesBtn {{ text-align:left; padding:4px 26px 4px 8px; border-radius:5px;
+    border:1px solid {c['btn_line']}; background:{c['btn']}; color:{c['text']}; }}
+QPushButton#notesBtn:hover {{ background:{c['btn_hover']}; }}
+QPushButton#notesBtn::menu-indicator {{ image:url("{_asset('caret_muted.svg')}");
+    subcontrol-origin:padding; subcontrol-position:right center; right:9px;
+    width:8px; height:5px; }}
+
+ClozeColumn QScrollArea, ClozeColumn QScrollArea > QWidget > QWidget {{
+    background:transparent; }}
+"""
+
+
+# Line icons, 24-unit grid, stroked in the theme's icon colour.
+_ICONS = {
+    "draw": '<rect x="4" y="6" width="16" height="12" rx="1.5"/>',
+    "select": '<path d="M6 4l11 7-5 1.2L9.5 18z"/>',
+    "text": '<path d="M6 6h12M12 6v13"/>',
+    "detect": '<path d="M4 9V5h4M16 5h4v4M20 15v4h-4M8 19H4v-4"/>'
+              '<path d="M8 12h8"/>',
+    "cloze": '<path d="M9 5c-2 0-3 1-3 3v2c0 1-1 2-2 2 1 0 2 1 2 2v2c0 2 1 3 3 3'
+             'M15 5c2 0 3 1 3 3v2c0 1 1 2 2 2-1 0-2 1-2 2v2c0 2-1 3-3 3"/>',
+    "auto": '<rect x="3.5" y="5" width="7" height="4" rx="1"/>'
+            '<rect x="13.5" y="5" width="7" height="4" rx="1"/>'
+            '<rect x="3.5" y="11" width="7" height="4" rx="1"/>'
+            '<rect x="13.5" y="11" width="7" height="4" rx="1"/>'
+            '<path d="M5 18.5h14"/>',
+    "open": '<path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4.2l2 2.2H19a1.5 1.5 0 0 1 '
+            '1.5 1.5V17a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17z"/>',
+    "caret": '<path d="M8 10l4 4 4-4"/>',
+}
+
+
+def _svg_pixmap(name: str, color: str, size: int, dpr: float) -> QPixmap:
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+           f'fill="none" stroke="{color}" stroke-width="1.6" '
+           'stroke-linecap="round" stroke-linejoin="round">'
+           f'{_ICONS[name]}</svg>').encode()
+    px = max(1, int(round(size * dpr)))
+    try:
+        from PyQt6.QtSvg import QSvgRenderer
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        QSvgRenderer(QByteArray(svg)).render(p)
+        p.end()
+    except Exception:       # no QtSvg module: the image plugin can still read it
+        pm = QPixmap()
+        pm.loadFromData(svg, "SVG")
+        pm = pm.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio,
+                       Qt.TransformationMode.SmoothTransformation)
+    pm.setDevicePixelRatio(dpr)
+    return pm
+
+
+def _icon(name: str, c: dict, size: int = 20, color: Optional[str] = None) -> QIcon:
+    dpr = max(2.0, (mw.app.devicePixelRatio() if mw else 1.0) or 1.0)
+    ic = QIcon()
+    ic.addPixmap(_svg_pixmap(name, color or c["icon"], size, dpr), QIcon.Mode.Normal)
+    ic.addPixmap(_svg_pixmap(name, c["icon_off"], size, dpr), QIcon.Mode.Disabled)
+    return ic
+
+
 def _asset(name: str) -> str:
     return os.path.join(os.path.dirname(__file__), name).replace("\\", "/")
 
 
-_CARET_PATH = _asset("caret.svg")
-_OPEN_BTN_QSS = (
-    "QToolButton{background:#836EAA;color:white;font-weight:bold;"
-    "padding:6px 18px 6px 16px;border-radius:6px;border:none;}"
-    "QToolButton:hover{background:#75619b;}"
-    "QToolButton:pressed{background:#67548c;}"
-    "QToolButton::menu-button{border:none;width:14px;"
-    "border-top-right-radius:6px;border-bottom-right-radius:6px;}"
-    "QToolButton::menu-button:hover{background:#67548c;}"
-    f'QToolButton::menu-arrow{{image:url("{_CARET_PATH}");'
-    "width:8px;height:5px;}"
-)
+# ------------------------------------------------------------ slide rail --
 
-# Quiet secondary buttons: hairline border, transparent fill, purple tint on
-# hover. rgba keeps it legible on both light and night themes.
-_DIALOG_QSS = (
-    "QPushButton{padding:5px 14px;border-radius:6px;"
-    "border:1px solid rgba(127,127,127,0.35);background:transparent;}"
-    "QPushButton:hover{background:rgba(131,110,170,0.14);}"
-    "QPushButton:pressed{background:rgba(131,110,170,0.26);}"
-    "QPushButton:disabled{color:rgba(127,127,127,0.45);"
-    "border-color:rgba(127,127,127,0.18);}"
-    "QPushButton:checked{background:rgba(131,110,170,0.28);"
-    "border-color:#836EAA;}"
-)
+class _ThumbDelegate(QStyledItemDelegate):
+    def __init__(self, rail: "_SlideRail"):
+        super().__init__(rail)
+        self._rail = rail
 
-# Auto-occlude sits beside Open PDF, outlined in purple: the next step after
-# opening a lecture, a step down from the solid primaries, and unlike a
-# toggled tool it never looks "on".
-def _auto_btn_qss() -> str:
-    a = _accent_color()
-    return (
-        f"QPushButton{{padding:5px 16px;border-radius:6px;font-weight:bold;color:{a};"
-        f"border:1.5px solid {a};background:transparent;}}"
-        "QPushButton:hover{background:rgba(131,110,170,0.16);}"
-        "QPushButton:pressed{background:rgba(131,110,170,0.28);}"
-        "QPushButton:disabled{color:rgba(127,127,127,0.45);"
-        "border-color:rgba(127,127,127,0.18);background:transparent;}"
-    )
+    def sizeHint(self, option, index):
+        return QSize(self._rail.WIDTH, self._rail.row_height(index.row()))
+
+    def paint(self, painter, option, index):
+        self._rail.paint_row(painter, option.rect, index.row(),
+                             bool(option.state & QStyle.StateFlag.State_Selected))
 
 
-# The notes-PDF attach control: a quiet split button matching the secondary
-# QPushButtons above (QSS selectors are per-class, so it needs its own copy).
-# Its caret is grey rather than the white one on the purple Open PDF button.
-_NOTES_BTN_QSS = (
-    "QToolButton{padding:5px 8px 5px 14px;border-radius:6px;"
-    "border:1px solid rgba(127,127,127,0.35);background:transparent;"
-    "text-align:left;}"
-    "QToolButton:hover{background:rgba(131,110,170,0.14);}"
-    "QToolButton:pressed{background:rgba(131,110,170,0.26);}"
-    "QToolButton:disabled{color:rgba(127,127,127,0.45);"
-    "border-color:rgba(127,127,127,0.18);}"
-    "QToolButton::menu-button{border:none;width:14px;"
-    "border-top-right-radius:6px;border-bottom-right-radius:6px;}"
-    "QToolButton::menu-button:hover{background:rgba(131,110,170,0.26);}"
-    f'QToolButton::menu-arrow{{image:url("{_asset("caret_muted.svg")}");'
-    "width:8px;height:5px;}"
-)
+class _SlideRail(QListWidget):
+    """Slide thumbnails down the left edge.
+
+    Thumbnails are rendered small, straight from pdfium, a few milliseconds'
+    worth per idle tick and only for the rows on screen and just past them,
+    then kept. Opening a PDF never waits on them, and the full-size pages
+    (LazyPages) are never touched for them.
+    """
+
+    WIDTH = 150
+    PAD = 8           # rail edge to the highlight
+    INSET = 4         # highlight to the thumbnail
+    GAP = 3           # above and below each highlight
+    _BUDGET = 0.012   # seconds of rendering per tick
+    _KEEP = 160       # thumbnails held at most
+
+    def __init__(self, render, info, parent=None):
+        """render(row, width_px) -> QImage or None.
+        info(row) -> (label, boxes, marked, page_width_px)."""
+        super().__init__(parent)
+        self.setObjectName("rail")
+        self.setFixedWidth(self.WIDTH)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setItemDelegate(_ThumbDelegate(self))
+        self._render, self._info = render, info
+        self._thumbs: dict = {}
+        self._sizes: list = []        # page sizes in points, per row
+        self._aspect = 0.75
+        self._mask = QColor(120, 120, 120)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(0)
+        self._timer.timeout.connect(self._tick)
+        self.verticalScrollBar().valueChanged.connect(self.kick)
+
+    def set_mask_color(self, rgb: tuple):
+        self._mask = QColor(*[int(v) for v in rgb[:3]])
+
+    def reset_pages(self, sizes: list):
+        self._thumbs.clear()
+        self._sizes = list(sizes)
+        w, h = sizes[0] if sizes else (4, 3)
+        self._aspect = (h / w) if w else 0.75
+        self.blockSignals(True)
+        self.clear()
+        for _ in range(len(sizes)):
+            self.addItem(QListWidgetItem())
+        self.blockSignals(False)
+        self.kick()
+
+    def thumb_width(self) -> int:
+        return self.WIDTH - 2 * (self.PAD + self.INSET)
+
+    def row_height(self, row: int) -> int:
+        w, h = self._sizes[row] if 0 <= row < len(self._sizes) else (1.0, self._aspect)
+        aspect = min(1.6, (h / w) if w else self._aspect)
+        return int(round(self.thumb_width() * aspect)) + 2 * (self.INSET + self.GAP)
+
+    def set_current(self, row: int):
+        if not 0 <= row < self.count():
+            return
+        self.blockSignals(True)
+        self.setCurrentRow(row)
+        self.blockSignals(False)
+        self.scrollToItem(self.item(row),
+                          QAbstractItemView.ScrollHint.EnsureVisible)
+        self.kick()
+
+    def refresh_row(self, row: int):
+        item = self.item(row) if 0 <= row < self.count() else None
+        if item is not None:
+            self.viewport().update(self.visualItemRect(item))
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.kick()
+
+    # -- rendering, a little at a time ---------------------------------------
+
+    def kick(self, *_):
+        if self.count() and not self._timer.isActive():
+            self._timer.start()
+
+    def _rows_wanted(self) -> list:
+        first = self.indexAt(QPoint(4, 2)).row()
+        last = self.indexAt(QPoint(4, self.viewport().height() - 2)).row()
+        n = self.count()
+        first = 0 if first < 0 else first
+        last = n - 1 if last < 0 else last
+        rows = list(range(first, last + 1))
+        for d in range(1, 4):                       # then just past the edges
+            rows += [r for r in (last + d, first - d) if 0 <= r < n]
+        return rows
+
+    def _tick(self):
+        dpr = self.devicePixelRatioF() or 1.0
+        width = int(round(self.thumb_width() * dpr))
+        t0 = time.perf_counter()
+        rows = self._rows_wanted()
+        for row in rows:
+            if row in self._thumbs:
+                continue
+            try:
+                img = self._render(row, width)
+            except Exception:     # noqa: BLE001 - a page pdfium can't draw
+                img = None
+            pm = None
+            if img is not None and not img.isNull():
+                pm = QPixmap.fromImage(img)
+                pm.setDevicePixelRatio(dpr)
+            self._thumbs[row] = pm
+            self.refresh_row(row)
+            if time.perf_counter() - t0 > self._BUDGET:
+                self._timer.start()
+                return
+        if len(self._thumbs) > self._KEEP:
+            keep = set(rows)
+            mid = rows[0] if rows else 0
+            for r in sorted(self._thumbs, key=lambda r: -abs(r - mid)):
+                if len(self._thumbs) <= self._KEEP:
+                    break
+                if r not in keep:
+                    del self._thumbs[r]
+
+    # -- painting ------------------------------------------------------------
+
+    def paint_row(self, p: QPainter, rect: QRect, row: int, selected: bool):
+        c = _colors()
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        hi = QRectF(rect).adjusted(self.PAD, self.GAP, -self.PAD, -self.GAP)
+        if selected:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(c["rail_on"]))
+            p.drawRoundedRect(hi, 6, 6)
+        area = hi.adjusted(self.INSET, self.INSET, -self.INSET, -self.INSET)
+        w_pt, h_pt = (self._sizes[row] if row < len(self._sizes)
+                      else (1.0, self._aspect))
+        aspect = (h_pt / w_pt) if w_pt else self._aspect
+        tw, th = area.width(), area.width() * aspect
+        if th > area.height():
+            th, tw = area.height(), area.height() / aspect
+        tr = QRectF(area.center().x() - tw / 2, area.center().y() - th / 2, tw, th)
+
+        # a hairline shadow, then the slide
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 34))
+        p.drawRoundedRect(tr.adjusted(-0.5, 0, 0.5, 1.2), 3, 3)
+        pm = self._thumbs.get(row)
+        if pm is not None:
+            p.drawPixmap(tr, pm, QRectF(pm.rect()))
+        else:
+            p.setBrush(QColor(c["placeholder"]))
+            p.drawRect(tr)
+
+        label, boxes, marked, page_w = self._info(row)
+        if boxes and page_w:
+            k = tr.width() / page_w
+            p.setBrush(self._mask)
+            for b in boxes:
+                r = QRectF(tr.left() + b["x"] * k, tr.top() + b["y"] * k,
+                           max(1.0, b["w"] * k), max(1.0, b["h"] * k))
+                angle = b.get("angle") or 0
+                if angle:
+                    p.save()
+                    p.translate(r.center())
+                    p.rotate(angle)
+                    p.translate(-r.center())
+                if b.get("shape") == "ellipse":
+                    p.drawEllipse(r)
+                else:
+                    p.drawRect(r)
+                if angle:
+                    p.restore()
+
+        f = QFont(p.font())
+        f.setPixelSize(10)
+        f.setWeight(QFont.Weight.Medium)
+        p.setFont(f)
+        fm = QFontMetrics(f)
+        pill = QRectF(tr.left() + 4, tr.bottom() - 4 - 14,
+                      fm.horizontalAdvance(label) + 8, 14)
+        p.setBrush(c["pill"])
+        p.drawRoundedRect(pill, 4, 4)
+        p.setPen(QColor(255, 255, 255))
+        p.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), label)
+
+        if marked:
+            centre = QPoint(int(tr.right() - 8), int(tr.bottom() - 8))
+            p.setPen(QPen(QColor(c["rail_on"] if selected else c["window"]), 2))
+            p.setBrush(QColor(c["accent"]))
+            p.drawEllipse(centre, 4, 4)
+        p.restore()
+
+
+class _StageBackdrop(QObject):
+    """Paints the area round the slide: a flat neutral ground and a soft
+    shadow under the slide. It only repaints when the slide moves or the
+    window changes size; the canvas paints itself opaquely on top."""
+
+    def __init__(self, viewport: QWidget, canvas: QWidget):
+        super().__init__(viewport)
+        self._vp, self._canvas = viewport, canvas
+        viewport.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if obj is not self._vp or ev.type() != QEvent.Type.Paint:
+            return False
+        c = _colors()
+        p = QPainter(self._vp)
+        p.fillRect(self._vp.rect(), QColor(c["stage"]))
+        if self._canvas.has_image():
+            g = QRectF(self._canvas.geometry())
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            steps, peak = 18, c["shadow"]
+            soft = g.translated(0, 5)
+            for i in range(1, steps + 1):
+                a = peak * (1 - i / (steps + 1)) ** 2
+                p.setPen(QPen(QColor(0, 0, 0, int(a)), 1))
+                p.drawRoundedRect(soft.adjusted(-i + .5, -i + .5, i - .5, i - .5),
+                                  2 + i, 2 + i)
+            p.setPen(QPen(QColor(0, 0, 0, 22 if peak < 60 else 60), 1))
+            p.drawRoundedRect(g.adjusted(-.5, -.5, .5, .5), 2, 2)
+        p.end()
+        return True
+
+
+class _Popover(QFrame):
+    """A small window under the lecture title for the things set once per
+    lecture: its name, deck, notes PDF, and the current slide's mode."""
+
+    def __init__(self, parent):
+        super().__init__(parent, Qt.WindowType.Popup
+                         | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint)
+        self.setObjectName("popover")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.form = QFormLayout(self)
+        self.form.setContentsMargins(16, 14, 16, 16)
+        self.form.setHorizontalSpacing(12)
+        self.form.setVerticalSpacing(10)
+        self.form.setLabelAlignment(Qt.AlignmentFlag.AlignRight
+                                    | Qt.AlignmentFlag.AlignVCenter)
+        self.setFixedWidth(360)
+
+    def add_row(self, label: str, widget: QWidget):
+        lab = QLabel(label)
+        lab.setObjectName("formLabel")
+        self.form.addRow(lab, widget)
+
+    def paintEvent(self, ev):
+        # rounded corners need the window itself to be see-through
+        c = _colors()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(QColor(c["line"]), 1))
+        p.setBrush(QColor(c["window"]))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 10, 10)
+        p.end()
+
+    def show_under(self, anchor: QWidget):
+        self.adjustSize()
+        self.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 6)))
+        self.show()
 
 
 def _centre_inside(rect: tuple, region: tuple) -> bool:
@@ -164,8 +555,8 @@ def _push_published(hosting: dict, urls: list) -> None:
             showWarning(
                 "Your cards were made, but their PDFs couldn't be pushed to "
                 f"the web, so the links won't open on your phone yet.\n\n{e}\n\n"
-                f"The files are in {hosting['folder']}. The next Create All "
-                "Cards tries the push again, or run git push there yourself.",
+                f"The files are in {hosting['folder']}. Creating cards again "
+                "tries the push again, or run git push there yourself.",
                 title="PDF Occlusion",
             )
             return
@@ -194,8 +585,8 @@ class PDFOcclusionDialog(QDialog):
         super().__init__(parent)
         self._editor = editor
         self.setWindowTitle("PDF Occlusion")
-        self.resize(1100, 860)
-        self.setStyleSheet(_DIALOG_QSS)
+        self.setObjectName("pdfOcclusion")
+        self.resize(1280, 860)
 
         # Documents: one entry per opened PDF. Pages are flattened into
         # self._pages; each doc records its slice via start/count.
@@ -224,6 +615,8 @@ class PDFOcclusionDialog(QDialog):
         self._build_ui()
 
         self._canvas.set_mask_color(tuple(_cfg("mask_color", [120, 120, 120])))
+        self._rail.set_mask_color(tuple(_cfg("mask_color", [120, 120, 120])))
+        gui_hooks.theme_did_change.append(self._on_theme_changed)
         self._canvas.set_editing_opacity(int(_cfg("editing_mask_opacity", 150)))
         self._apply_default_zoom()
 
@@ -379,137 +772,174 @@ class PDFOcclusionDialog(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # ── Row 1: open / recent · slide counter · zoom ───────────────────
-        row1 = QHBoxLayout()
+        # ── Top bar: open + lecture, tools in the middle, zoom + actions ──
+        bar = QFrame()
+        bar.setObjectName("topBar")
+        bar.setFixedHeight(52)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(10, 0, 16, 0)
+        row.setSpacing(0)
 
+        left = QHBoxLayout()
+        left.setSpacing(4)
         self._open_btn = QToolButton()
-        self._open_btn.setText("Open PDF")
-        self._open_btn.setStyleSheet(_OPEN_BTN_QSS)
-        self._open_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._open_btn.clicked.connect(self._open_pdf)
+        self._open_btn.setObjectName("barIcon")
+        self._open_btn.setToolTip("Open PDF (Ctrl+O)")
+        self._open_btn.setIconSize(QSize(20, 20))
+        self._open_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._recent_menu = QMenu(self)
         self._recent_menu.aboutToShow.connect(self._fill_recent_menu)
         self._open_btn.setMenu(self._recent_menu)
 
-        self._page_label = QLabel("No PDF loaded")
-        self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._page_label.setStyleSheet("font-weight:bold;")
+        # The lecture's name is the title; clicking it opens the popover
+        # with the name field, deck, notes PDF and this slide's mode.
+        self._title_btn = QPushButton()
+        self._title_btn.setObjectName("titleBtn")
+        self._title_btn.setIconSize(QSize(14, 14))
+        self._title_btn.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self._title_btn.setToolTip("Lecture, deck and notes")
+        self._title_btn.clicked.connect(self._show_popover)
+        self._sub_label = QLabel()
+        self._sub_label.setObjectName("subLabel")
+        left.addWidget(self._open_btn)
+        left.addSpacing(4)
+        left.addWidget(self._title_btn)
+        left.addWidget(self._sub_label)
+        left.addStretch(1)
 
-        self._zoom_out_btn = QPushButton("−")
-        self._zoom_out_btn.setFixedWidth(30)
-        self._zoom_out_btn.clicked.connect(self._zoom_out)
-        self._zoom_label = QLabel("100%")
-        self._zoom_label.setFixedWidth(44)
-        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._zoom_in_btn = QPushButton("+")
-        self._zoom_in_btn.setFixedWidth(30)
-        self._zoom_in_btn.clicked.connect(self._zoom_in)
-        self._fit_btn = QPushButton("Fit")
-        self._fit_btn.setFixedWidth(44)
-        self._fit_btn.setToolTip("Fit slide (Ctrl+0)")
-        self._fit_btn.clicked.connect(self._zoom_fit)
+        seg = QFrame()
+        seg.setObjectName("seg")
+        seg_row = QHBoxLayout(seg)
+        seg_row.setContentsMargins(3, 3, 3, 3)
+        seg_row.setSpacing(2)
 
-        row1.addWidget(self._open_btn)
-        row1.addStretch()
-        row1.addWidget(self._page_label)
-        row1.addStretch()
-        row1.addWidget(self._zoom_out_btn)
-        row1.addWidget(self._zoom_label)
-        row1.addWidget(self._zoom_in_btn)
-        row1.addWidget(self._fit_btn)
-        root.addLayout(row1)
+        def seg_btn(name, tip, slot):
+            b = QToolButton()
+            b.setObjectName("segBtn")
+            b.setCheckable(True)
+            b.setFixedSize(36, 28)
+            b.setIconSize(QSize(20, 20))
+            b.setToolTip(tip)
+            b.setProperty("_icon", name)
+            b.clicked.connect(slot)
+            seg_row.addWidget(b)
+            return b
 
-        # ── Row 2: lecture · deck · tags · default mode ───────────────────
-        row2 = QHBoxLayout()
+        self._draw_btn = seg_btn("draw", "Draw (D)", lambda: self._set_tool("draw"))
+        self._select_btn = seg_btn("select", "Select (V)",
+                                   lambda: self._set_tool("select"))
+        self._text_btn = seg_btn("text", "Text (T)", lambda: self._set_tool("text"))
+        self._detect_btn = seg_btn("detect", "Detect (F)", self._arm_detect)
+        self._cloze_btn = seg_btn("cloze", "Cloze (Ctrl+Shift+V)", self._open_cloze)
+
+        right = QHBoxLayout()
+        right.setSpacing(8)
+        right.addStretch(1)
+        self._zoom_label = QToolButton()
+        self._zoom_label.setObjectName("zoomBtn")
+        self._zoom_label.setText("100%")
+        self._zoom_label.setMinimumWidth(48)
+        self._zoom_label.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        zoom_menu = QMenu(self)
+        self._zoom_in_act = zoom_menu.addAction("Zoom In", self._zoom_in)
+        self._zoom_in_act.setShortcut(QKeySequence("Ctrl+="))
+        self._zoom_out_act = zoom_menu.addAction("Zoom Out", self._zoom_out)
+        self._zoom_out_act.setShortcut(QKeySequence("Ctrl+-"))
+        self._fit_act = zoom_menu.addAction("Fit Slide", self._zoom_fit)
+        self._fit_act.setShortcut(QKeySequence("Ctrl+0"))
+        for act in (self._zoom_in_act, self._zoom_out_act, self._fit_act):
+            # the window-level QShortcuts below do the work; these only show it
+            act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        self._zoom_label.setMenu(zoom_menu)
+
+        self._auto_btn = QPushButton("Auto")
+        self._auto_btn.setObjectName("secondary")
+        self._auto_btn.setIconSize(QSize(18, 18))
+        self._auto_btn.clicked.connect(self._open_auto_occlude)
+
+        self._create_btn = QPushButton("Create cards")
+        self._create_btn.setObjectName("primary")
+        self._create_btn.setDefault(True)
+        self._create_btn.clicked.connect(self._create_cards)
+
+        right.addWidget(self._zoom_label)
+        right.addSpacing(2)
+        right.addWidget(self._auto_btn)
+        right.addWidget(self._create_btn)
+
+        # equal stretch either side keeps the tools in the true centre
+        seg.setFixedHeight(34)
+        row.addLayout(left, 1)
+        row.addSpacing(12)
+        row.addWidget(seg, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addSpacing(12)
+        row.addLayout(right, 1)
+        root.addWidget(bar)
+
+        # ── Lecture popover ───────────────────────────────────────────────
+        self._popover = _Popover(self)
 
         self._lecture_edit = QLineEdit()
         self._lecture_edit.setPlaceholderText("Lecture")
-        self._lecture_edit.setToolTip("Card header")
-        self._lecture_edit.setMinimumWidth(180)
         self._lecture_edit.textEdited.connect(self._on_lecture_edited)
 
         self._deck_combo = QComboBox()
         self._deck_combo.setEditable(True)
-        self._deck_combo.setMinimumWidth(160)
-        self._deck_combo.setToolTip("Type a new name to create a deck")
         self._populate_decks()
 
-        self._notes_pdf_btn = QToolButton()
-        self._notes_pdf_btn.setStyleSheet(_NOTES_BTN_QSS)
-        self._notes_pdf_btn.setPopupMode(
-            QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._notes_pdf_btn.setMinimumWidth(150)
-        self._notes_pdf_btn.clicked.connect(self._choose_notes_pdf)
+        # a pop-up button like the combos round it: Choose, Open, Remove
+        self._notes_pdf_btn = QPushButton()
+        self._notes_pdf_btn.setObjectName("notesBtn")
         self._notes_pdf_menu = QMenu(self)
         self._notes_pdf_menu.aboutToShow.connect(self._fill_notes_pdf_menu)
         self._notes_pdf_btn.setMenu(self._notes_pdf_menu)
 
-        row2.addWidget(self._lecture_edit, stretch=3)
-        row2.addWidget(self._deck_combo, stretch=2)
-        row2.addWidget(self._notes_pdf_btn, stretch=2)
-        root.addLayout(row2)
-
-        # ── Row 3: tools · detect · per-slide mode ────────────────────────
-        row3 = QHBoxLayout()
-
-        self._draw_btn = QPushButton("Draw")
-        self._draw_btn.setCheckable(True)
-        self._draw_btn.setChecked(True)
-        self._draw_btn.setToolTip("Draw boxes (D)")
-        self._draw_btn.clicked.connect(lambda: self._set_tool("draw"))
-
-        self._select_btn = QPushButton("Select")
-        self._select_btn.setCheckable(True)
-        self._select_btn.setToolTip("Drag to select boxes (V)")
-        self._select_btn.clicked.connect(lambda: self._set_tool("select"))
-
-        self._text_btn = QPushButton("Text")
-        self._text_btn.setCheckable(True)
-        self._text_btn.setToolTip("Type on the slide, or on a box (T)")
-        self._text_btn.clicked.connect(lambda: self._set_tool("text"))
-
-        self._detect_btn = QPushButton("Detect")
-        self._detect_btn.setCheckable(True)
-        self._detect_btn.setToolTip("Box an area automatically (F)")
-        self._detect_btn.clicked.connect(self._arm_detect)
-
-        self._cloze_btn = QPushButton("Cloze")
-        self._cloze_btn.setToolTip("Cloze card from this slide (Ctrl+Shift+V)")
-        self._cloze_btn.clicked.connect(self._open_cloze)
-
-        self._auto_btn = QPushButton("Auto-occlude")
-        self._auto_btn.setToolTip("Box the whole PDF for you, then look it over")
-        self._auto_btn.clicked.connect(self._open_auto_occlude)
-        self._auto_btn.setStyleSheet(_auto_btn_qss())
-
-        slide_mode_label = QLabel("This slide:")
-        slide_mode_label.setStyleSheet("color:rgba(127,127,127,0.9);")
         self._page_mode_combo = QComboBox()
         self._page_mode_combo.addItem("Hide All, Show One", "ao")
         self._page_mode_combo.addItem("Hide One, Show One", "oa")
-        self._page_mode_combo.setToolTip("Occlusion mode for this slide")
         self._page_mode_combo.currentIndexChanged.connect(self._on_page_mode_changed)
 
-        row3.addWidget(self._draw_btn)
-        row3.addWidget(self._select_btn)
-        row3.addWidget(self._text_btn)
-        row3.addWidget(self._detect_btn)
-        row3.addWidget(self._cloze_btn)
-        row1.insertWidget(1, self._auto_btn)
-        row3.addSpacing(10)
-        self._detect_hint = QLabel("")
-        self._detect_hint.setStyleSheet(
-            f"color:{_accent_color()}; font-size:11px; font-weight:bold;")
-        row3.addWidget(self._detect_hint)
-        row3.addStretch()
-        row3.addWidget(slide_mode_label)
-        row3.addWidget(self._page_mode_combo)
-        root.addLayout(row3)
+        self._popover.add_row("Lecture", self._lecture_edit)
+        self._popover.add_row("Deck", self._deck_combo)
+        self._popover.add_row("Notes PDF", self._notes_pdf_btn)
+        self._popover.add_row("This slide", self._page_mode_combo)
 
-        # ── Canvas ────────────────────────────────────────────────────────
+        # ── Rail + stage ──────────────────────────────────────────────────
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+
+        self._rail = _SlideRail(self._render_thumb, self._thumb_info)
+        self._rail.currentRowChanged.connect(self._on_rail_row)
+        self._rail.setVisible(False)
+        body.addWidget(self._rail)
+
+        self._stage = QWidget()
+        self._stage.setObjectName("stage")
+        self._stage.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        stage_box = QVBoxLayout(self._stage)
+        stage_box.setContentsMargins(0, 0, 0, 0)
+        self._stack = QStackedWidget()
+        stage_box.addWidget(self._stack)
+
+        # nothing open yet: one button in the middle
+        empty = QWidget()
+        empty_box = QVBoxLayout(empty)
+        empty_box.addStretch(1)
+        empty_row = QHBoxLayout()
+        empty_row.addStretch(1)
+        self._empty_open_btn = QPushButton("Open PDF")
+        self._empty_open_btn.setObjectName("primary")
+        self._empty_open_btn.clicked.connect(self._open_pdf)
+        empty_row.addWidget(self._empty_open_btn)
+        empty_row.addStretch(1)
+        empty_box.addLayout(empty_row)
+        empty_box.addStretch(1)
+        self._stack.addWidget(empty)
+
         self._canvas = OcclusionCanvas()
         self._canvas.boxes_changed.connect(self._on_boxes_changed)
         self._canvas.slide_nav.connect(self._on_slide_nav)
@@ -519,9 +949,12 @@ class PDFOcclusionDialog(QDialog):
         self._canvas.annotations_changed.connect(self._on_annotations_changed)
         self._canvas.label_activated.connect(self._on_label_activated)
         self._scroll = QScrollArea()
+        self._scroll.setObjectName("stageScroll")
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setWidget(self._canvas)
         self._scroll.setWidgetResizable(False)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._backdrop = _StageBackdrop(self._scroll.viewport(), self._canvas)
 
         # Cloze lives in the window, not over it: cards already made on the
         # left, the composer on the right, the slide keeping the middle.
@@ -530,11 +963,11 @@ class PDFOcclusionDialog(QDialog):
         self._cloze_column.setVisible(False)
         self._cloze = ClozeComposer(self)
         # The panel is capped at half the slide's height and pinned to the
-        # top of its side, so the Add button can't end up next to Create All
-        # Cards — two buttons that do very different things.
+        # top of its side, so the Add button can't end up next to Create
+        # cards — two buttons that do very different things.
         self._cloze_side = QWidget()
         side = QVBoxLayout(self._cloze_side)
-        side.setContentsMargins(0, 0, 0, 0)
+        side.setContentsMargins(0, 12, 12, 0)
         side.addWidget(self._cloze)
         side.addStretch()
         self._cloze_side.setVisible(False)
@@ -543,61 +976,47 @@ class PDFOcclusionDialog(QDialog):
         self._cloze_column.card_activated.connect(self._on_cloze_activated)
         self._cloze_column.card_delete_requested.connect(self._on_cloze_delete)
 
-        mid = QHBoxLayout()
+        work = QWidget()
+        mid = QHBoxLayout(work)
         mid.setContentsMargins(0, 0, 0, 0)
-        mid.setSpacing(8)
-        mid.addWidget(self._cloze_column)
+        mid.setSpacing(0)
+        # margins round the column that go away with it
+        self._column_wrap = QWidget()
+        wrap_box = QVBoxLayout(self._column_wrap)
+        wrap_box.setContentsMargins(14, 14, 0, 14)
+        wrap_box.addWidget(self._cloze_column)
+        self._column_wrap.setVisible(False)
+        self._cloze_column.installEventFilter(self)
+        mid.addWidget(self._column_wrap)
         mid.addWidget(self._scroll, stretch=1)
         mid.addWidget(self._cloze_side)
-        root.addLayout(mid, stretch=1)
+        self._stack.addWidget(work)
 
-        # ── Bottom nav / create ───────────────────────────────────────────
-        bot = QHBoxLayout()
+        body.addWidget(self._stage, stretch=1)
+        root.addLayout(body, stretch=1)
 
-        self._prev_btn = QPushButton("← Prev")
-        self._prev_btn.setToolTip("Previous slide (PgUp)")
-        self._prev_btn.clicked.connect(self._prev_page)
-        self._next_btn = QPushButton("Next →")
-        self._next_btn.setToolTip("Next slide (PgDn)")
-        self._next_btn.clicked.connect(self._next_page)
+        # Re-fit a fitted slide when the window is resized, once it settles.
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(80)
+        self._resize_timer.timeout.connect(self._refit)
 
-        self._count_label = QLabel("")
-        self._count_label.setStyleSheet(
-            f"color:{_accent_color()}; font-size:11px; font-weight:bold;"
-        )
-
-        self._create_btn = QPushButton("Create All Cards")
-        self._create_btn.setDefault(True)
-        self._create_btn.clicked.connect(self._create_cards)
-        self._create_btn.setStyleSheet(_PRIMARY_BTN_QSS)
-
-        for w in (self._prev_btn, self._next_btn):
-            bot.addWidget(w)
-        bot.addStretch()
-        bot.addWidget(self._count_label)
-        bot.addSpacing(8)
-        bot.addWidget(self._create_btn)
-        root.addLayout(bot)
+        self._apply_theme()
 
         # ── Keep keyboard focus on the canvas ─────────────────────────────
         # The canvas only receives key events while it holds focus, and it is
-        # given focus as soon as a PDF loads. But a QPushButton takes focus
-        # when clicked, so hitting Detect Text (or Draw, or Fit, or Next) used
-        # to leave focus on the button and silently kill every canvas key —
-        # arrows, Delete, G/U/N, Esc — until you clicked the slide again.
-        # These are tool-palette buttons, so they don't need focus at all;
-        # every one of them also has a keyboard shortcut (D, V, T, Ctrl+0,
-        # Ctrl+±, PgUp/PgDn, Space), so dropping them from the Tab chain
-        # doesn't put anything out of reach of the keyboard.
+        # given focus as soon as a PDF loads. A button that takes focus when
+        # clicked would silently kill every canvas key — arrows, Delete,
+        # G/U/N, Esc — until you clicked the slide again. Every one of these
+        # has a keyboard shortcut (D, V, T, F, Ctrl+Shift+V, Ctrl+0, Ctrl+±),
+        # so dropping them from the Tab chain puts nothing out of reach.
         #
-        # Deliberately NOT in this list: the lecture field, the two combos and
-        # Open PDF / notes-PDF buttons, which do need focus to be usable — the
-        # first three because you type into them, the last two because they
-        # have no shortcut and would otherwise be mouse-only.
+        # Deliberately NOT in this list: the title (opens the popover), the
+        # lecture field, the two combos and the notes-PDF button, which need
+        # focus to be usable from the keyboard.
         for w in (self._draw_btn, self._select_btn, self._text_btn,
                   self._detect_btn, self._cloze_btn, self._auto_btn,
-                  self._zoom_out_btn, self._zoom_in_btn, self._fit_btn,
-                  self._prev_btn, self._next_btn):
+                  self._zoom_label, self._open_btn, self._create_btn):
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # Clicking the grey margin around the slide targets the scroll area,
         # not the canvas; without this it would take focus and cause the same
@@ -624,6 +1043,7 @@ class PDFOcclusionDialog(QDialog):
         QShortcut(QKeySequence("T"), self, lambda: self._set_tool("text"))
         QShortcut(QKeySequence("F"), self, self._arm_detect)
         QShortcut(QKeySequence("P"), self, self._toggle_peek)
+        QShortcut(QKeySequence("Ctrl+O"), self, self._open_pdf)
         # V for Vasu, who asked for the cloze composer. Plain V is already
         # the Select tool, so it takes the modifiers.
         QShortcut(QKeySequence("Ctrl+Shift+V"), self, self._open_cloze)
@@ -641,6 +1061,38 @@ class PDFOcclusionDialog(QDialog):
 
         self._update_controls()
 
+    def eventFilter(self, obj, ev):
+        if obj is self._cloze_column and ev.type() in (
+                QEvent.Type.ShowToParent, QEvent.Type.HideToParent):
+            self._column_wrap.setVisible(ev.type() == QEvent.Type.ShowToParent)
+        return super().eventFilter(obj, ev)
+
+    def _apply_theme(self):
+        """Colours and icons for Anki's current theme. Runs again when the
+        theme changes with the window open."""
+        c = _colors()
+        self.setStyleSheet(_window_qss(c))
+        self._create_btn.setStyleSheet(_primary_qss(c))
+        self._empty_open_btn.setStyleSheet(_primary_qss(c))
+        for b in (self._draw_btn, self._select_btn, self._text_btn,
+                  self._detect_btn, self._cloze_btn):
+            b.setIcon(_icon(b.property("_icon"), c))
+        self._open_btn.setIcon(_icon("open", c))
+        self._auto_btn.setIcon(_icon("auto", c, 18, color=c["text"]))
+        self._title_btn.setIcon(_icon("caret", c, 14, color=c["sub"]))
+        self._rail.viewport().update()
+        self._scroll.viewport().update()
+
+    def _show_popover(self):
+        if self._docs:
+            self._popover.show_under(self._title_btn)
+
+    def _on_theme_changed(self):
+        try:
+            self._apply_theme()
+        except RuntimeError:        # window already deleted
+            pass
+
     def _populate_decks(self):
         current = mw.col.decks.name(mw.col.decks.selected())
         default = _cfg("default_deck", "") or current
@@ -655,10 +1107,21 @@ class PDFOcclusionDialog(QDialog):
             self._deck_combo.setEditText(default)
 
     def _set_tool(self, tool: str):
+        if self._canvas.scan_armed():
+            self._canvas.arm_scan(False)
         self._canvas.set_tool(tool)
-        self._draw_btn.setChecked(tool == "draw")
-        self._select_btn.setChecked(tool == "select")
-        self._text_btn.setChecked(tool == "text")
+        self._sync_tools()
+
+    def _sync_tools(self):
+        """One raised segment for the tool in use (Detect while it waits for
+        its region), plus Cloze while its panel is open."""
+        armed = self._canvas.scan_armed()
+        tool = self._canvas.tool()
+        self._draw_btn.setChecked(not armed and tool == "draw")
+        self._select_btn.setChecked(not armed and tool == "select")
+        self._text_btn.setChecked(not armed and tool == "text")
+        self._detect_btn.setChecked(armed)
+        self._cloze_btn.setChecked(self._cloze_side.isVisible())
 
     def _default_mode(self) -> str:
         """PDF-wide occlusion mode — the config value; slides override it."""
@@ -677,6 +1140,7 @@ class PDFOcclusionDialog(QDialog):
         doc = self._doc_for_page(self._page_index)
         if doc:
             doc["lecture"] = text.strip()
+            self._sync_title()
 
     # ---------------------------------------------------------- notes PDF --
     #
@@ -694,12 +1158,14 @@ class PDFOcclusionDialog(QDialog):
         if not doc:
             return
         start_dir = os.path.dirname(doc.get("notes_pdf") or doc["path"])
+        self._popover.hide()
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose lecture notes PDF", start_dir, "PDF Files (*.pdf)"
         )
         if path:
             doc["notes_pdf"] = path
             self._sync_notes_pdf_btn()
+        self._popover.show_under(self._title_btn)
 
     def _remove_notes_pdf(self):
         doc = self._doc_for_page(self._page_index)
@@ -711,7 +1177,7 @@ class PDFOcclusionDialog(QDialog):
         self._notes_pdf_menu.clear()
         path = self._notes_pdf()
         self._notes_pdf_menu.addAction(
-            "Choose PDF…" if not path else "Replace", self._choose_notes_pdf)
+            "Choose…" if not path else "Replace…", self._choose_notes_pdf)
         act = self._notes_pdf_menu.addAction(
             "Open", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
         act.setEnabled(bool(path) and os.path.exists(path))
@@ -723,14 +1189,14 @@ class PDFOcclusionDialog(QDialog):
         self._notes_pdf_btn.setEnabled(bool(self._docs))
         path = self._notes_pdf()
         if not path:
-            self._notes_pdf_btn.setText("Notes PDF")
-            self._notes_pdf_btn.setToolTip("Attach lecture notes PDF")
+            self._notes_pdf_btn.setText("Choose…")
+            self._notes_pdf_btn.setToolTip("")
             return
         name = os.path.basename(path)
-        if len(name) > 22:
-            name = name[:21] + "…"
+        if len(name) > 28:
+            name = name[:27] + "…"
         missing = not os.path.exists(path)
-        self._notes_pdf_btn.setText(("⚠ " if missing else "") + name)
+        self._notes_pdf_btn.setText(name + (" (missing)" if missing else ""))
         self._notes_pdf_btn.setToolTip(
             path + ("\n\n(this file can no longer be found)" if missing else "")
         )
@@ -745,11 +1211,13 @@ class PDFOcclusionDialog(QDialog):
 
     def _fill_recent_menu(self):
         self._recent_menu.clear()
+        act = self._recent_menu.addAction("Open PDF…", self._open_pdf)
+        act.setShortcut(QKeySequence("Ctrl+O"))
+        act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
         sessions = session_store.list_sessions(8)
         if not sessions:
-            act = self._recent_menu.addAction("No recent sessions")
-            act.setEnabled(False)
             return
+        self._recent_menu.addSeparator()
         for s in sessions:
             path = s["pdf_path"]
             name = s.get("lecture") or os.path.splitext(os.path.basename(path))[0]
@@ -860,6 +1328,9 @@ class PDFOcclusionDialog(QDialog):
         telemetry.track("pdf_open", pages=len(all_pages), files=len(docs), reopened=silent_resume)
         self._maybe_resume_sessions(silent=silent_resume)
 
+        self._rail.reset_pages(self._page_sizes())
+        self._rail.setVisible(True)
+        self._stack.setCurrentIndex(1)
         self._show_page()
         self._apply_default_zoom()
         # so the arrows, Delete, G/U etc. reach the canvas without a click first
@@ -1011,7 +1482,7 @@ class PDFOcclusionDialog(QDialog):
                 showWarning(
                     f"Couldn't save your work on "
                     f"{os.path.basename(doc['path'])}.\n\n"
-                    "Until it saves, running Create All Cards again may make "
+                    "Until it saves, creating cards again may make "
                     "duplicate cards. Another program (antivirus, OneDrive) "
                     f"may be locking this folder:\n{session_store.folder()}"
                 )
@@ -1019,6 +1490,10 @@ class PDFOcclusionDialog(QDialog):
     def done(self, result: int):
         # runs on accept, reject (Esc) and window close — work is never lost
         self._persist_sessions()
+        try:
+            gui_hooks.theme_did_change.remove(self._on_theme_changed)
+        except ValueError:
+            pass
         if isinstance(self._pages, LazyPages):
             self._pages.close()
             self._pages = []
@@ -1089,8 +1564,9 @@ class PDFOcclusionDialog(QDialog):
         if natural_w <= 0 or natural_h <= 0:
             return
         vp = self._scroll.viewport()
-        self._set_zoom(min((vp.width() - 6) / natural_w,
-                           (vp.height() - 6) / natural_h))
+        m = 2 * _FIT_MARGIN
+        self._set_zoom(min((vp.width() - m) / natural_w,
+                           (vp.height() - m) / natural_h))
         self._fitted = True
 
     # --------------------------------------------------------------- pages --
@@ -1115,6 +1591,8 @@ class PDFOcclusionDialog(QDialog):
             self._lecture_edit.blockSignals(True)
             self._lecture_edit.setText(doc["lecture"])
             self._lecture_edit.blockSignals(False)
+        self._rail.set_current(self._page_index)
+        self._sync_tools()
         self._sync_page_mode_combo()
         self._update_controls()
         self._refresh_count()
@@ -1175,8 +1653,15 @@ class PDFOcclusionDialog(QDialog):
             self._page_index += 1
             self._show_page()
 
-        self._update_controls()
-        self._refresh_count()
+    def _go_to(self, idx: int):
+        if self._pages and 0 <= idx < len(self._pages) and idx != self._page_index:
+            self._save_current_boxes()
+            self._page_index = idx
+            self._show_page()
+
+    def _on_rail_row(self, row: int):
+        self._go_to(row)
+        self._canvas.setFocus()
 
     def _on_boxes_changed(self):
         self._refresh_count()
@@ -1234,18 +1719,12 @@ class PDFOcclusionDialog(QDialog):
     def _arm_detect(self):
         """Click 1 of 2: wait for the region. Clicking again stands down."""
         if not self._pages:
-            self._detect_btn.setChecked(False)
+            self._sync_tools()
             return
-        if self._canvas.scan_armed():
-            self._canvas.arm_scan(False)
-            self._detect_btn.setChecked(False)
-            self._say_detect("")
-            return
-        self._canvas.arm_scan(True)
-        self._detect_btn.setChecked(True)
-        # No prompt: the sunk button, the crosshair and the dimming that
+        self._canvas.arm_scan(not self._canvas.scan_armed())
+        # No prompt: the raised segment, the crosshair and the dimming that
         # follows the drag already say what is going on.
-        self._say_detect("")
+        self._sync_tools()
 
     def _toggle_peek(self):
         """P — flip the masks between the configured opacity and see-through.
@@ -1256,8 +1735,7 @@ class PDFOcclusionDialog(QDialog):
         self._canvas.set_peeking(not self._canvas.peeking())
 
     def _on_scan_cancelled(self):
-        self._detect_btn.setChecked(False)
-        self._say_detect("")
+        self._sync_tools()
 
     def _on_scan_region(self, x: float, y: float, w: float, h: float):
         """Click 2 of 2: box whatever is inside the region just dragged out.
@@ -1266,8 +1744,7 @@ class PDFOcclusionDialog(QDialog):
         what the slide itself decides, so there is nothing for the button to
         ask about.
         """
-        self._detect_btn.setChecked(False)
-        self._say_detect("")
+        self._sync_tools()
         doc = self._doc_for_page(self._page_index)
         if not doc:
             return
@@ -1302,10 +1779,10 @@ class PDFOcclusionDialog(QDialog):
         found = len(rects)
         rects = [r for r in rects if not self._already_boxed(r)]
         if not rects:
-            # Both of these go to the hint line beside the button rather than
-            # a dialog. Neither is an error and neither needs a decision, and
-            # a modal you have to dismiss to try the next region is the wrong
-            # weight for "that one came up empty".
+            # Both of these are a passing tooltip rather than a dialog.
+            # Neither is an error and neither needs a decision, and a modal
+            # you have to dismiss to try the next region is the wrong weight
+            # for "that one came up empty".
             self._say_detect("Already boxed" if found else "Nothing found",
                              transient=True)
             return
@@ -1314,7 +1791,6 @@ class PDFOcclusionDialog(QDialog):
             {"x": int(rx), "y": int(ry), "w": int(rw), "h": int(rh),
              "group": None, "shape": "rect", "id": uuid.uuid4().hex}
             for rx, ry, rw, rh in rects])
-        self._say_detect("")
 
     def _ocr_region(self, region: tuple) -> list:
         """Read the words out of the pixels of one region of the slide.
@@ -1345,11 +1821,9 @@ class PDFOcclusionDialog(QDialog):
         return False
 
     def _say_detect(self, msg: str, transient: bool = False):
-        """Say what Detect is waiting for, or what it just did."""
-        self._detect_hint.setText(msg)
-        if transient and msg:
-            QTimer.singleShot(3000, lambda: self._detect_hint.setText("")
-                              if self._detect_hint.text() == msg else None)
+        """Say what Detect just did, briefly, near the slide."""
+        if msg:
+            tooltip(msg, period=2500, parent=self)
 
     # -------------------------------------------------------------- counter --
 
@@ -1371,47 +1845,93 @@ class PDFOcclusionDialog(QDialog):
                    for cards in self._cloze_cards.values() for c in cards)
 
     def _refresh_count(self):
+        """The primary button says how many cards it would make, boxes and
+        cloze together. It stays live at zero when there are cards out there
+        to update or delete (all boxes on a slide removed, say)."""
         if not self._pages:
-            self._count_label.setText("")
-            self._count_label.setToolTip("")
+            self._create_btn.setText("Create cards")
+            self._create_btn.setToolTip("")
+            self._create_btn.setEnabled(False)
             return
         occlusion = self._expected_cards()
         cloze = self._cloze_cards_total()
         n = occlusion + cloze
-        self._count_label.setText(
-            f"{n} card{'s' if n != 1 else ''}"
-            + (f"  ({cloze} cloze)" if cloze else ""))
-        self._count_label.setToolTip(
-            f"{occlusion} occlusion card{'s' if occlusion != 1 else ''}"
-            + (f"\n{cloze} cloze card{'s' if cloze != 1 else ''}" if cloze else "")
-            + "\nCreate All Cards writes both."
-        )
+        self._create_btn.setText(
+            f"Create {n} card{'s' if n != 1 else ''}" if n else "Create cards")
+        self._create_btn.setToolTip(
+            f"{occlusion} occlusion, {cloze} cloze" if cloze else "")
+        pending = bool(self._cloze_stale) or any(d.get("note_map") for d in self._docs)
+        self._create_btn.setEnabled(bool(n) or pending)
+        self._rail.refresh_row(self._page_index)
 
     def _update_controls(self):
         has = bool(self._pages)
-        self._prev_btn.setEnabled(has and self._page_index > 0)
-        self._next_btn.setEnabled(has and self._page_index < len(self._pages) - 1)
-        self._create_btn.setEnabled(has)
-        self._zoom_in_btn.setEnabled(has)
-        self._zoom_out_btn.setEnabled(has)
-        self._fit_btn.setEnabled(has)
-        self._text_btn.setEnabled(has)
-        self._detect_btn.setEnabled(has)
-        self._cloze_btn.setEnabled(has)
+        for w in (self._draw_btn, self._select_btn, self._text_btn,
+                  self._detect_btn, self._cloze_btn, self._zoom_label,
+                  self._page_mode_combo):
+            w.setEnabled(has)
+        self._zoom_label.setVisible(has)
         self._auto_btn.setEnabled(has and not getattr(self, "_auto_run", None))
-        self._page_mode_combo.setEnabled(has)
         self._sync_notes_pdf_btn()
+        self._sync_title()
+        self._refresh_count()
 
-        if has:
-            idx = self._page_index
-            n = len(self._pages)
-            doc = self._doc_for_page(idx)
-            prefix = ""
-            if doc and len(self._docs) > 1:
-                prefix = f"{os.path.basename(doc['path'])}:  "
-            self._page_label.setText(f"{prefix}Slide {idx + 1} / {n}")
+    def _sync_title(self):
+        """Lecture name, then where in it you are, e.g. 12 of 54."""
+        doc = self._doc_for_page(self._page_index) if self._pages else None
+        self._title_btn.setVisible(doc is not None)
+        self._sub_label.setVisible(doc is not None)
+        if doc is None:
+            return
+        name = doc["lecture"] or os.path.splitext(os.path.basename(doc["path"]))[0]
+        fm = QFontMetrics(self._title_btn.font())
+        self._title_btn.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, 340))
+        local = self._page_index - doc["start"]
+        self._sub_label.setText(f"{local + 1} of {doc['count']}")
+
+    # -- thumbnails (see _SlideRail) -----------------------------------------
+
+    def _page_sizes(self) -> list:
+        """Every page's size in points, without loading any page."""
+        pages = self._pages
+        if not isinstance(pages, LazyPages):
+            return [(img.width(), img.height()) for img in pages]
+        sizes = []
+        for di, n in enumerate(pages.counts):
+            pdf = pages._docs[di]
+            for li in range(n):
+                try:
+                    sizes.append(tuple(pdf.get_page_size(li)))
+                except Exception:       # noqa: BLE001
+                    sizes.append(sizes[-1] if sizes else (612.0, 792.0))
+        return sizes
+
+    def _render_thumb(self, idx: int, width_px: int) -> Optional[QImage]:
+        pages = self._pages
+        if not isinstance(pages, LazyPages) or not 0 <= idx < len(pages):
+            return None
+        if pages.cached(idx):             # already rendered full size: shrink it
+            return pages[idx].scaledToWidth(
+                width_px, Qt.TransformationMode.SmoothTransformation)
+        di, li = pages._where[idx]
+        page = pages._docs[di][li]
+        try:
+            w = page.get_width()
+            return _render_page(page, width_px / w if w else 0.3)
+        finally:
+            page.close()
+
+    def _thumb_info(self, idx: int):
+        doc = self._doc_for_page(idx)
+        label = str(idx - doc["start"] + 1) if doc else str(idx + 1)
+        if idx == self._page_index and self._canvas.has_image():
+            boxes = self._canvas.get_boxes()
         else:
-            self._page_label.setText("No PDF loaded")
+            boxes = self._boxes.get(idx) or []
+        marked = bool(boxes) or bool(self._cloze_cards.get(idx))
+        sizes = self._rail._sizes
+        page_w = sizes[idx][0] * self._render_scale if idx < len(sizes) else 0
+        return label, boxes, marked, page_w
 
     # -------------------------------------------------------------- cloze --
     #
@@ -1423,6 +1943,8 @@ class PDFOcclusionDialog(QDialog):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._sync_panel_height()
+        if self._pages and self._fitted:
+            self._resize_timer.start()
 
     def _sync_panel_height(self):
         """Keep the composer to half the height the slide has."""
@@ -1481,7 +2003,7 @@ class PDFOcclusionDialog(QDialog):
         telemetry.track("auto_occlude_open", pages=doc["count"],
                         signed_in=bool(auto_occlude.account().get("token")))
         win = auto_occlude.AutoOccludeDialog(
-            self, bool(doc.get("notes_pdf")), counts, _PRIMARY_BTN_QSS)
+            self, bool(doc.get("notes_pdf")), counts, _primary_qss())
         if not win.exec() or not win.chosen:
             telemetry.track("auto_occlude_closed")
             return
@@ -1499,8 +2021,6 @@ class PDFOcclusionDialog(QDialog):
         notes = self._auto_notes_text(doc) if s.get("use_notes") else ""
         self._auto_replace = s["scope"] in ("all", "current")
         self._auto_btn.setEnabled(False)
-        if _cfg("try_atomic", False):     # temporary switch until the redesign gives atomic cards a button
-            s = dict(s, make="atomic")
         self._auto_run = auto_occlude.Run(self, pages, s, notes,
                                           self._auto_page_boxes, self._auto_finished,
                                           on_page_cards=self._auto_page_cards)
@@ -1517,6 +2037,7 @@ class PDFOcclusionDialog(QDialog):
             run.made += len(add)
             self._refresh_cloze_column()
             self._refresh_count()
+            self._rail.refresh_row(idx)
 
     def _auto_page_boxes(self, idx, units, image, scale, plan, run):
         old = self._boxes.get(idx, []) if idx != self._page_index else self._canvas.get_boxes()
@@ -1533,12 +2054,17 @@ class PDFOcclusionDialog(QDialog):
         elif boxes or self._auto_replace:
             self._boxes[idx] = keep + boxes
         self._refresh_count()
+        self._rail.refresh_row(idx)
 
     def _auto_finished(self, made, dropped, slides, complete):
         telemetry.track("auto_occlude_done", cards=made, dropped=dropped, slides=slides, complete=complete)
         run = self._auto_run
         self._auto_btn.setEnabled(bool(self._pages))
         self._auto_run = None
+        if complete and run is not None and run.quiz and run.quiz_url:
+            webbrowser.open(run.quiz_url)
+            tooltip(f"Quiz ready: {made} questions, opened in your browser", parent=self)
+            return
         # atomic cards first, then the slides they said are better tested by location go
         # straight through occlusion in the same sitting: no second trip to Auto-occlude
         if complete and run is not None and run.atomic and run.occlude:
@@ -1566,6 +2092,7 @@ class PDFOcclusionDialog(QDialog):
         showing = not self._cloze.isVisible()
         self._sync_panel_height()
         self._cloze_side.setVisible(showing)
+        self._sync_tools()
         if showing:
             self._cloze.refresh_slide()
             self._cloze.focus_editor()
@@ -1845,7 +2372,7 @@ class PDFOcclusionDialog(QDialog):
                 bits.append(f"{unchanged} unchanged")
             msg = "Cards: " + ", ".join(bits) + "."
         if canceled:
-            msg = ("Stopped early. Create All Cards again to finish the "
+            msg = ("Stopped early. Create cards again to finish the "
                    "rest.\n\n" + msg)
         if cloze_made:
             msg += f"\n\n{cloze_made} of them cloze."

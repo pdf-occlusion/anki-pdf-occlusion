@@ -70,8 +70,10 @@ _DEFAULT_MASK_RGB = (120, 120, 120)
 _DEFAULT_EDIT_ALPHA = 150
 _PEEK_ALPHA         = 45
 
-_SEL_FILL         = QColor(255, 199, 44, 185)   # gold — selection pops on purple
-_SEL_BORDER       = QColor(178, 128, 0, 240)
+# Selection keeps the mask's own grey (a shade darker) and is marked by a
+# purple outline and purple handles: purple is the one colour that means
+# "this box".
+_SEL_BORDER       = QColor(110, 90, 168, 255)
 _HANDLE_OUTLINE   = QColor(255, 255, 255, 240)
 _HANDLE_SIZE      = 5   # half-size in screen px
 
@@ -522,6 +524,9 @@ class OcclusionCanvas(QWidget):
         self.setMouseTracking(True)
         self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # paints every pixel itself, so a repaint never drags the backdrop
+        # behind it (and its shadow) along
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
 
     # ---------------------------------------------------------------- public
 
@@ -573,8 +578,7 @@ class OcclusionCanvas(QWidget):
         self._ungrouped_fill = QColor(r, g, b, a)
         self._ungrouped_border = QColor(
             int(r * 0.6), int(g * 0.6), int(b * 0.6), 225)
-        self._sel_fill = QColor(_SEL_FILL.red(), _SEL_FILL.green(),
-                                _SEL_FILL.blue(), a)
+        self._sel_fill = QColor(int(r * 0.85), int(g * 0.85), int(b * 0.85), a)
 
     def set_tool(self, tool: str):
         """Active tool: "draw" (boxes), "select" (marquee), "text" (annotations)."""
@@ -1144,6 +1148,7 @@ class OcclusionCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if self._pixmap:
+            p.fillRect(_event.rect(), QColor(255, 255, 255))
             p.drawPixmap(0, 0, self._display_pixmap())
 
         # Text written onto the slide. Painted before the boxes, because it
@@ -1197,12 +1202,13 @@ class OcclusionCanvas(QWidget):
 
             if box.group is not None:
                 fill = _group_color(box.group, sel, alpha=self._fill_alpha())
-                border = _group_color(box.group, sel, alpha=230)
+                border = (_SEL_BORDER if sel
+                          else _group_color(box.group, sel, alpha=230))
             else:
                 fill = self._sel_fill if sel else self._ungrouped_fill
                 border = _SEL_BORDER if sel else self._ungrouped_border
 
-            self._paint_shape(p, box, r, fill, border, 2.0 if sel else 1.5)
+            self._paint_shape(p, box, r, fill, border, 2.5 if sel else 1.5)
 
             # the label written across the mask — drawn the way the card
             # draws it, so the canvas is showing the real thing
