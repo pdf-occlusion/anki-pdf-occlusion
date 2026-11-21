@@ -7,6 +7,8 @@
 
 **PDF Occlusion** is an Anki add-on that creates image occlusion cards directly from PDF lecture slides. No more importing one image at a time. Open any PDF (or several at once), draw boxes over what you want to memorize, and generate cards in bulk. Built for studying from slide-heavy lectures.
 
+![PDF Occlusion](screenshots/window.png)
+
 ## Install
 
 Add-on code `783821131`, then restart Anki.
@@ -14,9 +16,23 @@ Add-on code `783821131`, then restart Anki.
 ## Quick Start
 
 1. `Tools → PDF Occlusion`, or `Ctrl+Shift+P` in the card editor.
-2. `Open PDF` — one file or several. The arrow beside it lists recent sessions.
-3. Drag boxes over what you want to memorize, or press `F` and drag over a region to have them placed for you.
-4. Pick a deck and click `Create All Cards`.
+2. Open a PDF with the folder button (`Ctrl+O`), one file or several. Its menu lists recent sessions.
+3. Drag boxes over what you want to memorize, or press `F` and drag over a region to have them placed for you. The slides are down the left; a dot marks the ones you have worked on.
+4. Click the lecture title to set the deck, then `Create N cards`.
+
+## Auto
+
+`Auto` in the top bar makes one of three things from the PDF for you:
+
+- **Boxes**: occlusion boxes placed by looking at each slide, the way you would draw them.
+- **Cards**: text cloze cards, one fact each; slides that teach by location get boxes instead.
+- **Quiz**: board-style questions with a reason for every answer, to take on any device.
+
+Everything stays editable until you create the cards. Your first 50 pages and 2 quizzes are free; more at [pdf-occlusion.github.io](https://pdf-occlusion.github.io).
+
+## Whole-slide review
+
+On a deck with PDF Occlusion cards due, the deck screen offers **One card** (the usual review) or **Whole slide**: every box on a slide starts covered, you uncover them one by one and mark each right or wrong. Each box is still its own card and is scheduled as usual.
 
 ## Shortcuts
 
@@ -44,6 +60,8 @@ Add-on code `783821131`, then restart Anki.
 | `Ctrl+Return` | File the cloze card |
 | `Ctrl+Shift+P` | Open from the card editor |
 | `g` | **While reviewing** — show all / hide all |
+| `Space` | **Whole slide** — uncover the next box, then mark it right |
+| `1` / `3` | **Whole slide** — wrong / right |
 
 ## Configuration
 
@@ -51,7 +69,7 @@ Add-on code `783821131`, then restart Anki.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `occlusion_mode` | `string` | `"ao"` | `"ao"` = Hide All, Show One · `"oa"` = Hide One, Show One |
+| `occlusion_mode` | `string` | `"ao"` | `"ao"` = Hide All, Show One; `"oa"` = Hide One, Show One |
 | `mask_color` | RGB | `[120, 120, 120]` | Boxes not being tested |
 | `highlight_color` | RGB | `[131, 110, 170]` | The box being tested |
 | `mask_opacity` | int 0–255 | `255` | Mask opacity **on cards** |
