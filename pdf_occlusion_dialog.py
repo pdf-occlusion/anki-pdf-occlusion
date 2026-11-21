@@ -1494,7 +1494,8 @@ class PDFOcclusionDialog(QDialog):
                         "Split the PDF, or run it on the slides without boxes.",
                         parent=self, title="PDF Occlusion")
             return
-        pages = [(i, doc["path"], i - doc["start"], self._page_image(i)) for i in idxs]
+        # each slide is rendered when the run reaches it, not all before it starts
+        pages = [(i, doc["path"], i - doc["start"], (lambda i=i: self._page_image(i))) for i in idxs]
         notes = self._auto_notes_text(doc) if s.get("use_notes") else ""
         self._auto_replace = s["scope"] in ("all", "current")
         self._auto_btn.setEnabled(False)

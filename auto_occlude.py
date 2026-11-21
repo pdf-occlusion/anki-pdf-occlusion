@@ -266,19 +266,29 @@ def _group_lines(words: list) -> list:
     return lines
 
 
-def slide_lines(path: str, page_index: int, scale: float, image: QImage) -> list:
-    """Every line of text on a slide, as [{"id", "src", "words": [...]}]."""
+def read_picture_text(image: QImage) -> list:
+    """Text recognition for one slide, safe to run on a worker thread (the recogniser
+    is a separate process; the QImage is the caller's own copy). [] if unavailable."""
+    if not ocr.available():
+        return []
+    try:
+        return ocr.recognize(image)
+    except ocr.OcrError:
+        return []
+
+
+def slide_lines(path: str, page_index: int, scale: float, image: QImage, read=None) -> list:
+    """Every line of text on a slide, as [{"id", "src", "words": [...]}].
+    `read` is the slide's text recognition when it was already done elsewhere."""
     found = _group_lines(_page_words(path, page_index, scale))
     out, wid = [], 0
     for ln in found:
         out.append({"id": f"L{len(out)}", "src": "text", "words": [
             {"t": t, "x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0} for t, x0, y0, x1, y1 in ln]})
-    if ocr.available():
+    if read is not None or ocr.available():
         known = [w for ln in out for w in ln["words"]]
-        try:
-            read = ocr.recognize(image)
-        except ocr.OcrError:
-            read = []
+        if read is None:
+            read = read_picture_text(image)
         extra = []
         for x, y, w, h, t in read:
             cx, cy = x + w / 2, y + h / 2
@@ -875,19 +885,54 @@ class Run:
         self.progress.setMinimumDuration(0)
         self.progress.canceled.connect(self._cancel)
         self.progress.setValue(0)
-        # reading is local and quick per slide; keep the window alive between
+        # Slides are rendered one per event-loop tick, and their text recognition
+        # (a separate process per slide, ~0.5 s each on a Mac) runs on four workers
+        # in parallel; slides are finished in order as their recognition comes back.
+        from concurrent.futures import ThreadPoolExecutor
+        self._pool = ThreadPoolExecutor(max_workers=4) if ocr.available() else None
+        self._images, self._reads = [], []
+        self._rendered = 0
+        QTimer.singleShot(0, self._prepare)
+
+    def _prepare(self):
         from . import vision
-        for i, (gidx, path, local, image) in enumerate(self.pages):
-            if self.cancelled:
-                return self._finish()
+        if self.cancelled:
+            if self._pool:
+                self._pool.shutdown(wait=False, cancel_futures=True)
+            return self._finish()
+        n = len(self.pages)
+        if self._rendered < n:
+            gidx, path, local, image = self.pages[self._rendered]
+            if callable(image):
+                image = image()
+            self._images.append(image)
+            self._reads.append(self._pool.submit(read_picture_text, QImage(image)) if self._pool else None)
+            self._rendered += 1
+        # finish every slide whose recognition is back, in order
+        while len(self.prepared) < self._rendered:
+            k = len(self.prepared)
+            fut = self._reads[k]
+            if fut is not None and not fut.done():
+                break
+            gidx, path, local, _img = self.pages[k]
+            image = self._images[k]
             try:
-                lines = slide_lines(path, local, self.dlg._render_scale, image)
+                lines = slide_lines(path, local, self.dlg._render_scale, image,
+                                    read=fut.result() if fut is not None else [])
             except Exception:       # noqa: BLE001 - a slide that can't be read is skipped
                 lines = []
             units = vision.units_for_slide(lines)
             self.prepared.append((gidx, local, image, lines, vision.slide_payload(local + 1, image, units), units))
-            self.progress.setValue(i + 1)
-            QApplication.processEvents()
+            self.progress.setValue(len(self.prepared))
+        if len(self.prepared) < n:
+            # keep rendering at full speed; only wait (briefly) when everything left is recognition
+            QTimer.singleShot(0 if self._rendered < n else 30, self._prepare)
+            return
+        if self._pool:
+            self._pool.shutdown(wait=False)
+        self._start_job()
+
+    def _start_job(self):
         self.progress.setLabelText("Reading the whole document…")
         doc = self.dlg._doc_for_page(self.pages[0][0])
         lecture = doc.get("lecture", "")
