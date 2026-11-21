@@ -1071,6 +1071,17 @@ class Run:
         self.progress.setMinimumDuration(0)
         self.progress.canceled.connect(self._cancel)
         self.progress.setValue(0)
+        # same guard as the Auto window: a modal progress window hidden behind the PDF
+        # Occlusion window would block every click while a run is going
+        def keep_in_front(state, p=self.progress):
+            try:
+                if p.isVisible() and state == Qt.ApplicationState.ApplicationActive:
+                    p.raise_()
+                    p.activateWindow()
+            except RuntimeError:   # the window is already gone
+                pass
+        QApplication.instance().applicationStateChanged.connect(keep_in_front)
+        self._keep_progress_in_front = keep_in_front
         # Slides are rendered one per event-loop tick, and their text recognition
         # (a separate process per slide, ~0.5 s each on a Mac) runs on four workers
         # in parallel; slides are finished in order as their recognition comes back.
@@ -1222,6 +1233,10 @@ class Run:
         in_background(lambda: call(f"/v1/jobs/{self.job}/quiz", body, self.token, 900), done)
 
     def _finish(self):
+        try:
+            QApplication.instance().applicationStateChanged.disconnect(self._keep_progress_in_front)
+        except (AttributeError, TypeError, RuntimeError):
+            pass
         complete = not self.cancelled    # closing the progress window emits canceled
         self.progress.close()
         self.on_finish(self.made, self.dropped, self.done_slides, complete)
