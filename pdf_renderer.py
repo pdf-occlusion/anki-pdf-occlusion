@@ -92,6 +92,100 @@ def render_pdf(path: str, scale: float = 1.0, on_progress=None) -> list[QImage]:
     return images
 
 
+def _render_page(page, scale: float) -> QImage:
+    bitmap = page.render(scale=scale, rev_byteorder=True)
+    try:
+        fmt = (QImage.Format.Format_RGBA8888 if bitmap.n_channels == 4
+               else QImage.Format.Format_RGB888)
+        img = QImage(bytes(bitmap.buffer), bitmap.width, bitmap.height, bitmap.stride, fmt)
+        return img.copy()   # detach from the buffer, which is freed with the bitmap
+    finally:
+        bitmap.close()
+
+
+class LazyPages:
+    """The pages of one or more PDFs, as a list of QImages that renders each page
+    the first time it is asked for and keeps only the most recent few.
+
+    Opening a lecture used to render every page up front: a second or more of a
+    frozen window, and every page held in memory at full resolution (half a
+    gigabyte for an ordinary deck). Now opening only counts pages, a slide is
+    rendered when it is shown (tens of milliseconds), and prefetch() fills in the
+    neighbours while the window is idle so moving between slides stays instant.
+    Indexing, len(), bool() and iteration behave like the list it replaces.
+    """
+
+    def __init__(self, paths: list, scale: float, keep: int = 16):
+        pdfium = _import_pdfium()
+        self.scale = scale
+        self.keep = keep
+        self._docs = [pdfium.PdfDocument(p) for p in paths]
+        self.counts = [len(d) for d in self._docs]
+        self._where = [(di, li) for di, n in enumerate(self.counts) for li in range(n)]
+        self._cache: "dict[int, QImage]" = {}
+        self._order: list = []
+
+    def __len__(self) -> int:
+        return len(self._where)
+
+    def __bool__(self) -> bool:
+        return bool(self._where)
+
+    def __iter__(self):
+        return (self[i] for i in range(len(self)))
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [self[j] for j in range(*i.indices(len(self)))]
+        if i < 0:
+            i += len(self)
+        if not 0 <= i < len(self):
+            raise IndexError(i)
+        img = self._cache.get(i)
+        if img is None:
+            di, li = self._where[i]
+            page = self._docs[di][li]
+            try:
+                img = _render_page(page, self.scale)
+            finally:
+                page.close()
+            self._cache[i] = img
+        if i in self._order:
+            self._order.remove(i)
+        self._order.append(i)
+        while len(self._order) > self.keep:
+            self._cache.pop(self._order.pop(0), None)
+        return img
+
+    def cached(self, i: int) -> bool:
+        return i in self._cache
+
+    def prefetch(self, around: int, reach: int = 2) -> Optional[int]:
+        """Render the nearest page around `around` that is not cached yet; returns
+        its index, or None when every neighbour within `reach` is ready. Call it
+        again from an idle timer until it returns None."""
+        for d in range(1, reach + 1):
+            for j in (around + d, around - d):
+                if 0 <= j < len(self) and j not in self._cache:
+                    self[j]
+                    # keep the shown page at the fresh end of the cache
+                    if around in self._order:
+                        self._order.remove(around)
+                        self._order.append(around)
+                    return j
+        return None
+
+    def close(self) -> None:
+        for d in self._docs:
+            try:
+                d.close()
+            except Exception:   # noqa: BLE001
+                pass
+        self._docs = []
+        self._cache.clear()
+        self._order.clear()
+
+
 def qimage_to_png_bytes(img: QImage) -> bytes:
     ba = QBuffer()
     ba.open(QIODevice.OpenModeFlag.WriteOnly)

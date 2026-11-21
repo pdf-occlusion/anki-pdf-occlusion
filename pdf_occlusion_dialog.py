@@ -26,7 +26,7 @@ from .card_builder import (ensure_note_type, create_occlusion_notes,
                            NoteTypeConflict)
 from . import ocr
 from . import telemetry
-from .pdf_renderer import (render_pdf, get_text_word_rects, get_page_text,
+from .pdf_renderer import (render_pdf, LazyPages, get_text_word_rects, get_page_text,
                            get_table_cell_rects, merge_word_rects)
 
 
@@ -814,24 +814,34 @@ class PDFOcclusionDialog(QDialog):
         self._persist_sessions()
 
         self._render_scale = float(_cfg("render_dpi_scale", 2.0))
-        rendered = self._render_paths(paths)
-        if rendered is None:
+        # pages are rendered when shown, not all up front (see LazyPages)
+        try:
+            all_pages = LazyPages(paths, self._render_scale)
+        except Exception as exc:     # noqa: BLE001 - a damaged or locked PDF
+            telemetry.track("error", where="open_pdf", message=str(exc)[:200])
+            showWarning(f"Could not open this PDF:\n{exc}")
+            return
+        if not all_pages:
+            all_pages.close()
             return
 
         docs: list[dict] = []
-        all_pages: list = []
-        for path, pages in rendered:
-            docs.append({
-                "path": path,
-                "lecture": os.path.splitext(os.path.basename(path))[0],
-                "start": len(all_pages),
-                "count": len(pages),
-                "notes_pdf": "",
-                "note_map": {},
-                "image_map": {},
-            })
-            all_pages.extend(pages)
+        start = 0
+        for path, count in zip(paths, all_pages.counts):
+            if count:
+                docs.append({
+                    "path": path,
+                    "lecture": os.path.splitext(os.path.basename(path))[0],
+                    "start": start,
+                    "count": count,
+                    "notes_pdf": "",
+                    "note_map": {},
+                    "image_map": {},
+                })
+            start += count
 
+        if isinstance(self._pages, LazyPages):
+            self._pages.close()
         self._docs = docs
         self._pages = all_pages
         self._page_index = 0
@@ -1009,6 +1019,9 @@ class PDFOcclusionDialog(QDialog):
     def done(self, result: int):
         # runs on accept, reject (Esc) and window close — work is never lost
         self._persist_sessions()
+        if isinstance(self._pages, LazyPages):
+            self._pages.close()
+            self._pages = []
         super().done(result)
 
     # ---------------------------------------------------------------- zoom --
@@ -1108,6 +1121,22 @@ class PDFOcclusionDialog(QDialog):
         if self._cloze.isVisible():
             self._cloze.refresh_slide()
         self._refresh_cloze_column()
+        self._schedule_prefetch()
+
+    def _schedule_prefetch(self):
+        """Render the slides next to this one while the window is idle, one per
+        tick, so moving to them is instant; a newer call cancels an older one."""
+        if not isinstance(self._pages, LazyPages):
+            return
+        self._prefetch_gen = getattr(self, "_prefetch_gen", 0) + 1
+        gen = self._prefetch_gen
+
+        def step():
+            if gen != self._prefetch_gen or not isinstance(self._pages, LazyPages):
+                return
+            if self._pages.prefetch(self._page_index) is not None:
+                QTimer.singleShot(10, step)
+        QTimer.singleShot(50, step)
 
     def _sync_page_mode_combo(self):
         """Show the slide's effective mode: its override, else the config default."""
