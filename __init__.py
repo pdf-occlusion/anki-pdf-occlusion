@@ -493,3 +493,83 @@ try:
     _anki_hooks.notes_will_be_deleted.append(_on_notes_will_be_deleted)
 except AttributeError:
     pass  # hook unavailable in this Anki build; media cleanup via Check Media instead
+
+
+# ── Whole-slide review: the switch on the deck screen ─────────────────────────
+#
+# On a deck that has PDF Occlusion cards due, the deck screen shows a two-way
+# switch. Each side is a small moving picture of what it does: "One card" shows
+# a single box lighting up, "Whole slide" shows every box on a slide uncovering
+# in turn. Picking a side starts that kind of review; the choice is remembered
+# and highlighted next time. One card is the default.
+
+_SWITCH_CSS = """
+<style>
+#pdfocc-mode{display:flex;justify-content:center;gap:14px;margin:18px auto 4px}
+#pdfocc-mode button{all:unset;cursor:pointer;width:148px;padding:10px 0 8px;border-radius:12px;
+  border:1px solid var(--border, #d2d2d7);text-align:center;font-size:13px;color:var(--fg, inherit)}
+#pdfocc-mode button.on{border:2px solid #6e5aa8;padding:9px 0 7px}
+#pdfocc-mode svg{display:block;margin:0 auto 6px;width:72px;height:44px}
+#pdfocc-mode .s{fill:none;stroke:currentColor;stroke-width:1.4;opacity:.75}
+#pdfocc-mode .m{fill:#7c7c80}
+#pdfocc-mode .one .t{fill:#6e5aa8;animation:pdfocc-pulse 2.2s ease-in-out infinite}
+#pdfocc-mode .all .m{animation:pdfocc-uncover 3.6s ease-in-out infinite}
+#pdfocc-mode .all .m:nth-of-type(2){animation-delay:.6s}
+#pdfocc-mode .all .m:nth-of-type(3){animation-delay:1.2s}
+#pdfocc-mode .all .m:nth-of-type(4){animation-delay:1.8s}
+@keyframes pdfocc-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes pdfocc-uncover{0%,10%{opacity:1}30%,80%{opacity:0}100%{opacity:1}}
+</style>"""
+
+_SWITCH_HTML = """
+<div id="pdfocc-mode">
+  <button class="one%(one_on)s" onclick="pycmd('pdfocc_mode:one')">
+    <svg viewBox="0 0 72 44"><rect class="s" x="4" y="4" width="64" height="36" rx="3"/>
+      <rect class="m" x="12" y="12" width="20" height="6"/><rect class="t" x="12" y="24" width="28" height="6"/>
+      <rect class="m" x="44" y="12" width="16" height="6"/></svg>One card</button>
+  <button class="all%(all_on)s" onclick="pycmd('pdfocc_mode:slide')">
+    <svg viewBox="0 0 72 44"><rect class="s" x="4" y="4" width="64" height="36" rx="3"/>
+      <rect class="m" x="12" y="12" width="20" height="6"/><rect class="m" x="12" y="24" width="28" height="6"/>
+      <rect class="m" x="44" y="12" width="16" height="6"/><rect class="m" x="44" y="24" width="16" height="6"/></svg>Whole slide</button>
+</div>"""
+
+
+def _occlusion_due(deck_name: str) -> list:
+    try:
+        from .whole_slide import due_card_ids
+        return due_card_ids(mw.col, deck_name)
+    except Exception:       # noqa: BLE001 - never break the deck screen
+        return []
+
+
+def _add_mode_switch(overview, content) -> None:
+    try:
+        name = mw.col.decks.current()["name"]
+    except Exception:       # noqa: BLE001
+        return
+    if not _occlusion_due(name):
+        return
+    slide = _get_config().get("review_mode") == "slide"
+    content.table += _SWITCH_CSS + _SWITCH_HTML % {"one_on": "" if slide else " on", "all_on": " on" if slide else ""}
+
+
+def _on_mode_message(handled, message: str, context):
+    if not isinstance(message, str) or not message.startswith("pdfocc_mode:"):
+        return handled
+    mode = message.split(":", 1)[1]
+    cfg = _get_config()
+    cfg["review_mode"] = "slide" if mode == "slide" else "one"
+    mw.addonManager.writeConfig(__name__, cfg)
+    if mode == "slide":
+        from .whole_slide import SlideReview
+        cids = _occlusion_due(mw.col.decks.current()["name"])
+        if cids:
+            SlideReview(mw, cids).exec()
+        mw.moveToState("overview")
+    else:
+        mw.moveToState("review")
+    return (True, None)
+
+
+gui_hooks.overview_will_render_content.append(_add_mode_switch)
+gui_hooks.webview_did_receive_js_message.append(_on_mode_message)
