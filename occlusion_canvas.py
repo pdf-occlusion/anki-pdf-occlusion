@@ -595,6 +595,7 @@ class OcclusionCanvas(QWidget):
 
     def set_image(self, img: QImage, boxes: list[dict], render_scale: float = 1.0):
         self._pixmap = _pix_to_qpixmap(img)
+        self._pixmap_gen = getattr(self, "_pixmap_gen", 0) + 1
         self._orig_w = img.width()
         self._orig_h = img.height()
         self._render_scale = max(render_scale, 0.01)
@@ -1121,17 +1122,29 @@ class OcclusionCanvas(QWidget):
             p.setPen(pen)
             p.drawRect(r)
 
+    def _display_pixmap(self) -> QPixmap:
+        """The slide scaled to the current zoom, in the screen's own pixels. Scaling a
+        full-resolution slide on every paint (every mouse move while drawing or dragging)
+        was most of the cost of a repaint; now it happens once per slide and zoom step."""
+        dpr = self.devicePixelRatioF() or 1.0
+        w = max(1, round(self._orig_w * self._disp * dpr))
+        h = max(1, round(self._orig_h * self._disp * dpr))
+        # a counter, not id(): a freed pixmap's id can be reused by the next slide's
+        key = (getattr(self, "_pixmap_gen", 0), w, h)
+        if getattr(self, "_scaled_key", None) != key:
+            self._scaled = self._pixmap.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                               Qt.TransformationMode.SmoothTransformation)
+            self._scaled.setDevicePixelRatio(dpr)
+            self._scaled_key = key
+        return self._scaled
+
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if self._pixmap:
-            p.drawPixmap(
-                QRect(0, 0, int(self._orig_w * self._disp),
-                      int(self._orig_h * self._disp)),
-                self._pixmap,
-            )
+            p.drawPixmap(0, 0, self._display_pixmap())
 
         # Text written onto the slide. Painted before the boxes, because it
         # is part of the picture: a mask drawn over one has to cover it.
