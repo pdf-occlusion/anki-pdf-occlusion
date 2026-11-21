@@ -337,7 +337,7 @@ def document_payload(dlg, doc: dict, prepared: list, notes: str) -> dict:
     being occluded), a few page images, and the notes."""
     start, count = doc["start"], doc["count"]
     read = {gidx - start: "\n".join(" ".join(w["t"] for w in ln["words"]) for ln in lines)
-            for gidx, _local, _img, lines, _p in prepared}
+            for gidx, lines in ((p[0], p[3]) for p in prepared)}
     pages = []
     for local in range(min(count, 400)):
         text = _page_text(doc["path"], local, dlg._render_scale) or read.get(local, "")
@@ -876,6 +876,7 @@ class Run:
         self.progress.canceled.connect(self._cancel)
         self.progress.setValue(0)
         # reading is local and quick per slide; keep the window alive between
+        from . import vision
         for i, (gidx, path, local, image) in enumerate(self.pages):
             if self.cancelled:
                 return self._finish()
@@ -883,7 +884,8 @@ class Run:
                 lines = slide_lines(path, local, self.dlg._render_scale, image)
             except Exception:       # noqa: BLE001 - a slide that can't be read is skipped
                 lines = []
-            self.prepared.append((gidx, local, image, lines, slide_payload(local + 1, image, lines)))
+            units = vision.units_for_slide(lines)
+            self.prepared.append((gidx, local, image, lines, vision.slide_payload(local + 1, image, units), units))
             self.progress.setValue(i + 1)
             QApplication.processEvents()
         self.progress.setLabelText("Reading the whole document…")
@@ -925,7 +927,7 @@ class Run:
         if self.cancelled or not self.queue:
             return self._finish()
         chunk = self.queue[0]
-        body = {"slides": [c[4] for c in chunk],
+        body = {"slides": [{k: v for k, v in c[4].items() if not k.startswith("_")} for c in chunk],
                 "settings": {k: self.s[k] for k in SENT}}
         if self.s.get("use_notes") and self.notes:
             body["notes"] = self.notes
@@ -944,9 +946,9 @@ class Run:
                 return self.on_finish(self.made, self.dropped, self.done_slides, False)
             self.queue.pop(0)
             pages = res.get("pages") or {}
-            for gidx, local, image, lines, _p in chunk:
-                cards = pages.get(str(local + 1)) or pages.get(f"p{local + 1}") or []
-                self.on_page_boxes(gidx, lines, image.width(), image.height(), cards, self)
+            for gidx, local, image, _lines, payload, units in chunk:
+                plan = pages.get(str(local + 1)) or pages.get(f"p{local + 1}") or {}
+                self.on_page_boxes(gidx, units, image, payload["_scale"], plan, self)
             self.done_slides += len(chunk)
             self.progress.setValue(len(self.pages) + self.done_slides)
             self._next()

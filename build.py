@@ -43,6 +43,7 @@ ADDON_FILES = [
     "note_recovery.py",
     "pdf_hosting.py",
     "auto_occlude.py",
+    "vision.py",
     "telemetry.py",
     "version.py",
     "config.json",

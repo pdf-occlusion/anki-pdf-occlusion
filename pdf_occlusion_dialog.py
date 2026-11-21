@@ -1473,11 +1473,12 @@ class PDFOcclusionDialog(QDialog):
                                           self._auto_page_boxes, self._auto_finished)
         self._auto_run.start()
 
-    def _auto_page_boxes(self, idx, lines, w, h, cards, run):
+    def _auto_page_boxes(self, idx, units, image, scale, plan, run):
         old = self._boxes.get(idx, []) if idx != self._page_index else self._canvas.get_boxes()
         keep = [] if self._auto_replace else old
         next_group = max([b["group"] for b in keep if b.get("group") is not None] + [0]) + 1
-        boxes, made, dropped = auto_occlude.plan_to_boxes(cards, lines, w, h, next_group)
+        from . import vision
+        boxes, made, dropped = vision.boxes_for_page(plan, units, image, scale, next_group)
         run.made += made
         run.dropped += dropped
         if idx == self._page_index:
