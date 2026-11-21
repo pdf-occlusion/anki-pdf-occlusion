@@ -878,6 +878,26 @@ class AutoOccludeDialog(QDialog):
         self._refresh()
         self._load_balance()
         telemetry.watch_buttons(self, "auto_occlude")
+        # A modal window that slips behind its parent (after a trip to the browser for
+        # sign-in or pricing, say) still blocks every click while being invisible. Bring
+        # it back to the front whenever Anki becomes the active app again.
+        QApplication.instance().applicationStateChanged.connect(self._keep_in_front)
+
+    def _keep_in_front(self, state=None):
+        if self.isVisible() and (state is None or state == Qt.ApplicationState.ApplicationActive):
+            self.raise_()
+            self.activateWindow()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._keep_in_front)
+
+    def done(self, r):
+        try:
+            QApplication.instance().applicationStateChanged.disconnect(self._keep_in_front)
+        except (TypeError, RuntimeError):
+            pass
+        super().done(r)
 
     def _set_make(self, make: str):
         """Show only what applies to the chosen output."""
