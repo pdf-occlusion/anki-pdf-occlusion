@@ -705,15 +705,21 @@ QUIZ_STYLES = [
 QUIZ_COUNT = (5, 40)       # the server's limits
 
 
-def _preview(kind: str, size: int = 56):
-    """A small drawing of each choice: what it makes, or how its questions look."""
-    from aqt.qt import QIcon, QPainter, QPixmap, QColor, QPen, QRectF
+def _preview(kind: str, size: int = 56, white: bool = False):
+    """A small drawing of each choice: what it makes, or how its questions look.
+    white: drawn in white for the purple start button."""
+    from aqt.qt import QIcon, QPainter, QPixmap, QColor, QPen, QRectF, QPointF
     from aqt.theme import theme_manager
     night = theme_manager.night_mode
     ink = QColor(220, 220, 225) if night else QColor(58, 58, 60)
     soft = QColor(ink); soft.setAlpha(110)
     mask = QColor(124, 124, 128)
     accent = QColor(150, 128, 210) if night else QColor(110, 90, 168)
+    if white:
+        ink = QColor(255, 255, 255)
+        soft = QColor(255, 255, 255, 170)
+        mask = QColor(255, 255, 255, 150)
+        accent = QColor(255, 255, 255)
     pm = QPixmap(size * 2, size * 2)
     pm.setDevicePixelRatio(2)
     pm.fill(QColor(0, 0, 0, 0))
@@ -734,13 +740,23 @@ def _preview(kind: str, size: int = 56):
         p.fillRect(QRectF(30, 18, 18, 5), mask)
         p.fillRect(QRectF(30, 26, 14, 5), accent)
         p.fillRect(QRectF(30, 34, 17, 5), mask)
-    elif kind == "atomic":         # a card: a sentence with one blank
-        p.drawRoundedRect(QRectF(7, 13, s - 14, s - 26), 4, 4)
-        lines(13, 22, [s - 26])
-        lines(13, 29, [9])
-        p.fillRect(QRectF(25, 26.5, 14, 5), accent)
-        lines(41, 29, [s - 54])
-        lines(13, 36, [s - 34])
+    elif kind == "atomic":         # a flashcard: a sentence with one blank, a second card behind
+        p.setPen(QPen(soft, 1.4))
+        p.drawRoundedRect(QRectF(12, 9, s - 20, s - 24), 4, 4)
+        p.setPen(QPen(ink, 1.6))
+        p.setBrush(QColor(0, 0, 0, 0))
+        p.drawRoundedRect(QRectF(6, 15, s - 20, s - 24), 4, 4)
+        lines(12, 25, [s - 32])
+        lines(12, 33, [6])
+        p.setPen(QPen(accent, 1.4))
+        p.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 60))
+        p.drawRoundedRect(QRectF(21, 29.5, 16, 7), 2, 2)
+        p.setPen(QPen(accent, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for dx in (25.5, 29, 32.5):
+            p.drawPoint(QPointF(dx, 33))
+        p.setBrush(QColor(0, 0, 0, 0))
+        lines(40, 33, [s - 54])
+        lines(12, 41, [s - 38])
     elif kind == "quiz":           # a question with five choices, one picked
         lines(9, 11, [s - 18, s - 26], gap=5, col=ink)
         for k in range(4):
@@ -774,6 +790,84 @@ def _credits_left(b: dict):
         return None
     v = b.get("credits_left", b.get("pages_left"))
     return int(v) if v is not None else None
+
+
+class _CreditMeter(QWidget):
+    """What a run costs, drawn: the number of credits in an accent pill, a bar of
+    the balance with this run's share filled, and what is left after."""
+
+    def __init__(self, c: dict):
+        super().__init__()
+        self.c = c
+        self.need, self.left, self.free = 0, None, None
+        self.suffix = ""
+        self.setMinimumHeight(30)
+        self.setMinimumWidth(220)
+
+    def set(self, need: int, left, free=None, suffix: str = ""):
+        self.need, self.left, self.free, self.suffix = need, left, free, suffix
+        self.update()
+
+    def text(self) -> str:      # for tests and logs
+        if self.free is not None:
+            return f"{self.free} Free Credits"
+        if self.left is None:
+            return f"{self.need} credits"
+        return f"{self.need} of {self.left} credits{self.suffix}"
+
+    def paintEvent(self, _e):
+        from aqt.qt import QPainter, QColor, QRectF, QFont, QFontMetrics, QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c = self.c
+        accent, sub, line = QColor(c["accent"]), QColor(c["sub"]), QColor(c["line"])
+        red = QColor("#d93025")
+        f = QFont(self.font())
+        f.setPixelSize(12)
+        f.setBold(True)
+        cy = self.height() / 2
+        if self.free is not None:          # signed out: what a new account gets
+            p.setFont(f)
+            p.setPen(accent)
+            p.drawText(QRectF(0, 0, self.width(), self.height()),
+                       int(Qt.AlignmentFlag.AlignVCenter), f"{self.free} Free Credits")
+            p.end()
+            return
+        short = self.left is not None and self.need > self.left
+        col = red if short else accent
+        # the pill: how many this run uses
+        label = f"{self.need:,} Credit{'s' if self.need != 1 else ''}"
+        w = QFontMetrics(f).horizontalAdvance(label) + 18
+        pill = QRectF(0, cy - 11, w, 22)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(col.red(), col.green(), col.blue(), 38))
+        p.drawRoundedRect(pill, 11, 11)
+        p.setFont(f)
+        p.setPen(col)
+        p.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), label)
+        if self.left is None:
+            p.end()
+            return
+        # the bar: the balance, with this run's share filled
+        x = w + 12
+        bar_w = 110
+        bar = QRectF(x, cy - 3, bar_w, 6)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(line)
+        p.drawRoundedRect(bar, 3, 3)
+        share = 1.0 if short or not self.left else min(1.0, self.need / self.left)
+        if share > 0:
+            p.setBrush(col)
+            p.drawRoundedRect(QRectF(x, cy - 3, max(6, bar_w * share), 6), 3, 3)
+        f2 = QFont(self.font())
+        f2.setPixelSize(12)
+        p.setFont(f2)
+        p.setPen(red if short else sub)
+        after = (f"Only {self.left:,} left" if short
+                 else f"{self.left - self.need:,} left after{self.suffix}")
+        p.drawText(QRectF(x + bar_w + 10, 0, self.width() - x - bar_w - 10, self.height()),
+                   int(Qt.AlignmentFlag.AlignVCenter), after)
+        p.end()
 
 
 def _initial_icon(email: str, c: dict, size: int = 26):
@@ -821,6 +915,8 @@ class AutoOccludeDialog(QDialog):
         # what to make: three tiles, each a picture of the result; the account sits apart, top right
         head = QHBoxLayout()
         head.setSpacing(10)
+        head.addSpacing(84)          # balances the account corner, so the tiles sit in the true centre
+        head.addStretch(1)
         self.make_group = QButtonGroup(self)
         self.make_btns = {}
         for value, label in MAKES:
@@ -838,7 +934,17 @@ class AutoOccludeDialog(QDialog):
         self.acct_menu = QMenu(self)
         self.acct_menu.aboutToShow.connect(self._fill_account_menu)
         self.acct_btn.setMenu(self.acct_menu)
-        head.addWidget(self.acct_btn, 0, Qt.AlignmentFlag.AlignTop)
+        self.signin_btn = QPushButton("Sign In")
+        self.signin_btn.setObjectName("secondary")
+        self.signin_btn.clicked.connect(self._sign)
+        corner = QWidget()
+        corner.setFixedWidth(84)
+        cl = QHBoxLayout(corner)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addStretch(1)
+        cl.addWidget(self.acct_btn, 0, Qt.AlignmentFlag.AlignTop)
+        cl.addWidget(self.signin_btn, 0, Qt.AlignmentFlag.AlignTop)
+        head.addWidget(corner, 0, Qt.AlignmentFlag.AlignTop)
         root.addLayout(head)
 
         line = QFrame(); line.setObjectName("rule"); line.setFixedHeight(1)
@@ -879,15 +985,19 @@ class AutoOccludeDialog(QDialog):
 
         count_row = QHBoxLayout()
         count_row.setContentsMargins(0, 0, 0, 0)
-        self.quiz_count = QSlider(Qt.Orientation.Horizontal)
+        from aqt.qt import QSpinBox
+        self.quiz_count = QSpinBox()
+        self.quiz_count.setObjectName("count")
         self.quiz_count.setRange(*QUIZ_COUNT)
         self.quiz_count.setValue(int(s.get("quiz_count") or 20))
+        self.quiz_count.setFixedWidth(72)
+        self.quiz_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.count_label = QLabel()
-        self.count_label.setObjectName("value")
-        self.count_label.setMinimumWidth(96)
+        self.count_label.setObjectName("note")
         self.quiz_count.valueChanged.connect(lambda _v: self._refresh())
-        count_row.addWidget(self.quiz_count, 1)
-        count_row.addWidget(self.count_label)
+        count_row.setSpacing(12)
+        count_row.addWidget(self.quiz_count)
+        count_row.addWidget(self.count_label, 1)
         cw = QWidget(); cw.setLayout(count_row)
         self._add_row("quiz_count", "Questions", cw)
 
@@ -933,22 +1043,20 @@ class AutoOccludeDialog(QDialog):
         # what it uses, and go
         foot = QHBoxLayout()
         foot.setSpacing(8)
-        self.usage = QLabel()
-        self.usage.setObjectName("usage")
-        self.topup_btn = QPushButton("Top Up")
+        self.usage = _CreditMeter(self.c)
+        self.topup_btn = QPushButton("Buy Credits")
         self.topup_btn.setObjectName("secondary")
         self.topup_btn.clicked.connect(lambda: webbrowser.open(f"{SITE}/pricing/"))
-        cancel = QPushButton("Cancel")
-        cancel.setObjectName("secondary")
-        cancel.clicked.connect(self.reject)
+        # the start button is a picture of what it makes, like Create Cards in the main window
         self.start_btn = QPushButton()
-        self.start_btn.setStyleSheet(primary_qss)
+        self.start_btn.setStyleSheet(primary_qss + "QPushButton{padding:0;}")
+        self.start_btn.setFixedSize(52, 36)
+        self.start_btn.setIconSize(QSize(30, 30))
         self.start_btn.setDefault(True)
         self.start_btn.clicked.connect(self._start)
         foot.addWidget(self.usage, 1)
         foot.addWidget(self.topup_btn)
         foot.addSpacing(6)
-        foot.addWidget(cancel)
         foot.addWidget(self.start_btn)
         root.addLayout(foot)
 
@@ -976,6 +1084,9 @@ class AutoOccludeDialog(QDialog):
             f"QLabel#usage {{ color:{c['sub']}; }}"
             f"QLabel#usage[short=\"true\"] {{ color:#d93025; }}"
             f"QLabel#value {{ color:{c['text']}; }}"
+            f"QLabel#note {{ color:{c['sub']}; }}"
+            f"QSpinBox#count {{ background:{c['btn']}; color:{c['text']}; border:1px solid {c['btn_line']};"
+            f" border-radius:7px; padding:3px 4px; min-height:24px; }}"
             f"QToolButton#tile {{ background:{c['btn']}; color:{c['text']};"
             f" border:1px solid {c['btn_line']}; border-radius:10px; padding:6px 4px 8px 4px; }}"
             f"QToolButton#tile:hover {{ background:{c['btn_hover']}; }}"
@@ -1021,9 +1132,15 @@ class AutoOccludeDialog(QDialog):
         wrap = QWidget()
         wl = QHBoxLayout(wrap)
         wl.setContentsMargins(0, 0, 0, 0)
+        wl.setSpacing(12)
         wl.addWidget(seg)
+        note = QLabel()
+        note.setObjectName("note")
+        note.setMaximumWidth(210)
+        wl.addWidget(note)
         wl.addStretch(1)
         wrap._seg = seg
+        wrap._note = note
         return wrap, btns
 
     def _seg_add(self, seg, btns, value, label, checked):
@@ -1100,6 +1217,7 @@ class AutoOccludeDialog(QDialog):
         pick = keep if keep in values else ("empty" if boxes else "all")
         for value, label in options:
             self._seg_add(seg, self.scope_btns, value, label, value == pick)
+        self._show_row("scope", not quiz)     # a quiz is always made from the whole lecture
         self._show_row("density", boxes)
         self._show_row("card_style", cards)
         self._show_row("quiz_style", quiz)
@@ -1169,7 +1287,7 @@ class AutoOccludeDialog(QDialog):
         if parts:
             m.addAction(", ".join(parts)).setEnabled(False)
         m.addSeparator()
-        m.addAction("Top Up", lambda: webbrowser.open(f"{SITE}/pricing/"))
+        m.addAction("Buy Credits", lambda: webbrowser.open(f"{SITE}/pricing/"))
         m.addAction("Account", lambda: webbrowser.open(f"{SITE}/account/"))
         m.addSeparator()
         m.addAction("Sign Out", self._sign)
@@ -1194,36 +1312,55 @@ class AutoOccludeDialog(QDialog):
         signed = bool(a.get("token"))
         b = self.balance or {}
         self.acct_btn.setVisible(signed)
+        self.signin_btn.setVisible(not signed)
         if signed:
             self.acct_btn.setIcon(_initial_icon(a.get("email") or "", self.c))
         make = getattr(self, "make", "occlusion")
-        scope = self._picked(self.scope_btns, "all")
+        scope = "all" if make == "quiz" else self._picked(self.scope_btns, "all")
         n = self.slide_counts.get(scope, 0)
         q = self.quiz_count.value()
-        self.count_label.setText(f"{q} Questions")
         costs = b.get("credit_costs") or {}
         # one balance: a credit per slide for boxes or cards, two per quiz question
         need = q * int(costs.get("question", 2)) if make == "quiz" else n * int(costs.get("slide", 1))
         left = _credits_left(b) if signed else None
         short = signed and left is not None and need > left
+        replaces = make == "occlusion" and scope == "all" and self.slide_counts.get("empty", n) < n
         if not signed:
-            text = f"{self.free_pages} credits free"
-        elif left is None:
-            text = f"Uses {need:,} credit{'s' if need != 1 else ''}"
-        elif short:
-            text = f"Needs {need:,} credits, {left:,} left"
+            self.usage.set(need, None, free=self.free_pages)
         else:
-            text = f"Uses {need:,} of {left:,} credits"
-        if make == "occlusion" and scope == "all" and self.slide_counts.get("empty", n) < n:
-            text += ", replaces your boxes"
-        self.usage.setText(text)
-        self.usage.setProperty("short", "true" if short else "false")
-        self.usage.style().unpolish(self.usage)
-        self.usage.style().polish(self.usage)
+            self.usage.set(need, left, suffix=", replaces your boxes" if replaces else "")
+        self.count_label.setText(f"{need:,} credits" if make == "quiz" else "")
+        self._captions(make, scope)
         self.topup_btn.setVisible(short)
-        self.start_btn.setText("Sign In" if not signed else
-                               {"occlusion": "Make Boxes", "atomic": "Make Cards", "quiz": "Make Quiz"}[make])
-        self.start_btn.setEnabled(not signed or (n > 0 and not short))
+        names = {"occlusion": "Make Boxes", "atomic": "Make Cards", "quiz": "Make Quiz"}
+        self.start_btn.setIcon(_preview(make, 56, white=True))
+        self.start_btn.setAccessibleName(names[make])
+        self.start_btn.setToolTip(names[make])
+        self.start_btn.setEnabled(signed and n > 0 and not short)
+
+    def _captions(self, make: str, scope: str):
+        """A few words beside each choice saying what the chosen option does."""
+        n_all = self.slide_counts.get("all", 0)
+        n_empty = self.slide_counts.get("empty", 0)
+        slides = {
+            "current": "Only the slide you're on",
+            "empty": f"The {n_empty} slide{'s' if n_empty != 1 else ''} without boxes",
+            "all": (f"All {n_all} slides, replacing boxes" if make == "occlusion"
+                    else f"All {n_all} slides"),
+        }
+        amount = {
+            "fewer": "Key labels and facts only",
+            "balanced": "What a careful student would box",
+            "more": "Everything worth testing",
+        }
+        styles = {
+            "complete": "Every testable fact",
+            "essentials": "High-yield facts only",
+            "scratch": "Defines each term first",
+        }
+        self.scope_seg._note.setText(slides.get(scope, ""))
+        self.density_seg._note.setText(amount.get(self._picked(self.density_btns, "balanced"), ""))
+        self.card_seg._note.setText(styles.get(self._picked(self.card_btns, "complete"), ""))
 
     def _start(self):
         if not account().get("token"):
@@ -1237,7 +1374,7 @@ class AutoOccludeDialog(QDialog):
         s["skip_admin"] = self.skip_admin.isChecked()
         s["custom"] = self.custom.toPlainText().strip()[:1000]
         s["use_notes"] = self.notes.isChecked()
-        s["scope"] = self._picked(self.scope_btns, "all")
+        s["scope"] = "all" if getattr(self, "make", "") == "quiz" else self._picked(self.scope_btns, "all")
         s["show_more"] = self.more.isVisible()
         s["make"] = getattr(self, "make", "occlusion")
         s["card_style"] = self._picked(self.card_btns, "complete")
