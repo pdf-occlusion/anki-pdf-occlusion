@@ -281,6 +281,23 @@ class _SlideView(QWidget):
         self.graded[cid] = ease
         self.anim.start(("ring", cid), self.RING_S)
 
+    def show_all(self, on: bool):
+        """Uncover every box on the slide (due ones as revealed, the rest
+        peeked), or cover again the ones not marked yet."""
+        if not self.slide:
+            return
+        for reg in self.slide["regions"]:
+            cid = reg["cid"]
+            if on:
+                self.reveal(cid)
+            elif cid in self.revealed and cid not in self.graded:
+                self.revealed.discard(cid)
+                self.anim.start(("rev", cid), self.REVEAL_S)
+        for k in range(len(self.slide.get("others", []))):
+            if (k in self.peeked) != on:
+                self.toggle_peek(k)
+        self.update()
+
     def toggle_peek(self, k: int):
         self.peeked ^= {k}
         self.anim.start(("peek", k), self.PEEK_S)
@@ -635,7 +652,12 @@ class SlideReview(QDialog):
         self.setStyleSheet(
             f"QDialog#slideReview {{ background:{c['stage']}; }}"
             f"QFrame#seg {{ background:{c['seg']}; border:none; border-radius:8px; }}"
-            f"QLabel#count {{ color:{c['sub']}; font-size:13px; }}")
+            f"QLabel#count {{ color:{c['sub']}; font-size:13px; }}"
+            f"QPushButton#showAll {{ background:{c['btn']}; color:{c['text']};"
+            f" border:1px solid {c['btn_line']}; border-radius:7px; padding:5px 14px;"
+            f" font-weight:600; }}"
+            f"QPushButton#showAll:hover {{ background:{c['btn_hover']}; }}"
+            f"QPushButton#showAll:checked {{ background:{c['seg']}; }}")
 
         self.view = _SlideView(self, self._reveal)
         self.grade_btns = {}
@@ -656,11 +678,19 @@ class SlideReview(QDialog):
         self.count.setObjectName("count")
         self.count.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        from aqt.qt import QPushButton
+        self.show_btn = QPushButton("Show All")
+        self.show_btn.setObjectName("showAll")
+        self.show_btn.setCheckable(True)
+        self.show_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.show_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.show_btn.toggled.connect(self._show_all)
         self.bar = _Bar(c, self)
         grid = QGridLayout(self.bar)
         grid.setContentsMargins(18, 2, 18, 0)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(2, 1)
+        grid.addWidget(self.show_btn, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(seg, 0, 1, Qt.AlignmentFlag.AlignCenter)
         grid.addWidget(self.count, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
@@ -678,6 +708,11 @@ class SlideReview(QDialog):
     # --- flow -----------------------------------------------------------
     def _next_slide(self):
         self._advancing = False
+        if getattr(self, "show_btn", None) is not None and self.show_btn.isChecked():
+            self.show_btn.blockSignals(True)
+            self.show_btn.setChecked(False)
+            self.show_btn.setText("Show All")
+            self.show_btn.blockSignals(False)
         self.index += 1
         if self.index >= len(self.slides):
             self.accept()
@@ -695,6 +730,17 @@ class SlideReview(QDialog):
             self.cards[reg["cid"]] = c
         self.count.setText(f"{self.index + 1} of {len(self.slides)}")
         self.bar.set_progress(self.done_n / self.total, animate=self.index > 0)
+        self._sync()
+
+    def _show_all(self, on: bool):
+        if self._advancing:
+            return
+        self.show_btn.setText("Hide All" if on else "Show All")
+        self.view.show_all(on)
+        regions = self.view.slide["regions"] if self.view.slide else []
+        left = [k for k, r in enumerate(regions) if r["cid"] not in self.view.graded]
+        if left and (self.view.current is None or regions[self.view.current]["cid"] in self.view.graded):
+            self.view.set_current(left[0])
         self._sync()
 
     def _reveal(self, i: int):
