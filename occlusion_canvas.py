@@ -1506,6 +1506,11 @@ class OcclusionCanvas(QWidget):
                                          pt.y() - _HANDLE_SIZE,
                                          _HANDLE_SIZE * 2, _HANDLE_SIZE * 2))
                     p.setBrush(Qt.BrushStyle.NoBrush)
+            elif self._annot_press is not None and self._annot_press[0] is a:
+                # grabbed in Select: outline it so you can see where it is going
+                p.setPen(QPen(_ANNOT_HINT, 2))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRect(r)
 
         font = p.font()
         font.setPointSize(8)

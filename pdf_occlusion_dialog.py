@@ -178,11 +178,12 @@ QPushButton#notesBtn {{ text-align:left; padding:5px 26px 5px 10px; border-radiu
     border:1px solid {c['btn_line']}; background:{c['btn']}; color:{c['text']}; min-height:20px; }}
 QFrame#popover QLineEdit {{ padding:5px 10px; border-radius:6px; min-height:20px;
     border:1px solid {c['btn_line']}; background:{c['btn']}; color:{c['text']}; }}
-QFrame#popover QComboBox {{ padding:5px 26px 5px 10px; border-radius:6px; min-height:20px;
+QLabel#barLabel {{ color:{c['sub']}; }}
+QFrame#popover QComboBox, QComboBox#barCombo {{ padding:5px 26px 5px 10px; border-radius:6px; min-height:20px;
     border:1px solid {c['btn_line']}; background:{c['btn']}; color:{c['text']}; }}
-QFrame#popover QComboBox::drop-down {{ border:none; width:24px; }}
-QFrame#popover QComboBox::down-arrow {{ image:url("{_asset('caret_muted.svg')}"); width:8px; height:5px; }}
-QFrame#popover QComboBox QLineEdit {{ border:none; padding:0; background:transparent; min-height:0; }}
+QFrame#popover QComboBox::drop-down, QComboBox#barCombo::drop-down {{ border:none; width:24px; }}
+QFrame#popover QComboBox::down-arrow, QComboBox#barCombo::down-arrow {{ image:url("{_asset('caret_muted.svg')}"); width:8px; height:5px; }}
+QFrame#popover QComboBox QLineEdit, QComboBox#barCombo QLineEdit {{ border:none; padding:0; background:transparent; min-height:0; }}
 QToolButton#pagerBtn {{ border:none; background:transparent; border-radius:6px; padding:0; }}
 QToolButton#pagerBtn:hover, QToolButton#pagerBtn:pressed {{ background:{c['hover']}; }}
 QPushButton#notesBtn:hover {{ background:{c['btn_hover']}; }}
@@ -921,7 +922,7 @@ class PDFOcclusionDialog(QDialog):
         self._title_btn.setObjectName("titleBtn")
         self._title_btn.setIconSize(QSize(14, 14))
         self._title_btn.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self._title_btn.setToolTip("Lecture, deck and notes")
+        self._title_btn.setToolTip("Lecture name")
         self._title_btn.clicked.connect(self._show_popover)
         self._sub_label = QLabel()
         self._sub_label.setObjectName("subLabel")
@@ -1016,7 +1017,8 @@ class PDFOcclusionDialog(QDialog):
 
         self._create_btn = _CountButton()
         self._create_btn.setAccessibleName("Create Cards")
-        self._create_btn.setFixedSize(48, 34)
+        self._create_btn.setText("Create")
+        self._create_btn.setFixedHeight(34)
         self._create_btn.setIconSize(QSize(20, 20))
         self._create_btn.setObjectName("primary")
         self._create_btn.setDefault(True)
@@ -1054,8 +1056,7 @@ class PDFOcclusionDialog(QDialog):
         self._notes_pdf_btn.setObjectName("notesBtn")
         self._notes_pdf_menu = QMenu(self)
         self._notes_pdf_menu.aboutToShow.connect(self._fill_notes_pdf_menu)
-        self._notes_pdf_btn.clicked.connect(lambda: self._notes_pdf_menu.exec(
-            self._notes_pdf_btn.mapToGlobal(QPoint(0, self._notes_pdf_btn.height() + 2))))
+        self._notes_pdf_btn.clicked.connect(self._notes_pdf_clicked)
         caret_row = QHBoxLayout(self._notes_pdf_btn)
         caret_row.setContentsMargins(0, 0, 10, 0)
         caret_row.addStretch(1)
@@ -1066,8 +1067,21 @@ class PDFOcclusionDialog(QDialog):
 
 
         self._popover.add_row("Lecture", self._lecture_edit)
-        self._popover.add_row("Deck", self._deck_combo)
-        self._popover.add_row("Notes PDF", self._notes_pdf_btn)
+
+        # deck and notes PDF sit on the bar, always showing what is set
+        self._deck_combo.setObjectName("barCombo")
+        self._deck_combo.setFixedWidth(175)
+        self._notes_pdf_btn.setFixedWidth(150)
+        self._deck_label = QLabel("Deck")
+        self._notes_label = QLabel("Notes")
+        for lab in (self._deck_label, self._notes_label):
+            lab.setObjectName("barLabel")
+        title_at = left.indexOf(self._title_btn) + 1
+        for k, w in enumerate((self._deck_label, self._deck_combo,
+                               self._notes_label, self._notes_pdf_btn)):
+            left.insertWidget(title_at + k, w, 0, Qt.AlignmentFlag.AlignVCenter)
+        left.insertSpacing(title_at, 10)
+        left.insertSpacing(title_at + 3, 10)
 
         # ── Rail + stage ──────────────────────────────────────────────────
         body = QHBoxLayout()
@@ -1271,7 +1285,7 @@ class PDFOcclusionDialog(QDialog):
         theme changes with the window open."""
         c = _colors()
         self.setStyleSheet(_window_qss(c))
-        self._create_btn.setStyleSheet(_primary_qss(c) + "QPushButton{padding:0;}")
+        self._create_btn.setStyleSheet(_primary_qss(c) + "QPushButton{padding:0 26px 0 12px;}")
         self._create_btn.setIcon(_icon("cards", c, 20, color="#ffffff"))
         for b in (self._rail_btn, self._prev_btn, self._next_btn):
             b.setIcon(_icon(b.property("_icon"), c))
@@ -1362,20 +1376,25 @@ class PDFOcclusionDialog(QDialog):
         if not doc:
             return
         start_dir = os.path.dirname(doc.get("notes_pdf") or doc["path"])
-        self._popover.hide()
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose Lecture Notes PDF", start_dir, "PDF Files (*.pdf)"
         )
         if path:
             doc["notes_pdf"] = path
             self._sync_notes_pdf_btn()
-        self._popover.show_under(self._title_btn)
 
     def _remove_notes_pdf(self):
         doc = self._doc_for_page(self._page_index)
         if doc:
             doc["notes_pdf"] = ""
             self._sync_notes_pdf_btn()
+
+    def _notes_pdf_clicked(self):
+        # nothing attached yet: straight to the file picker; otherwise Replace, Open, Remove
+        if not self._notes_pdf():
+            return self._choose_notes_pdf()
+        self._notes_pdf_menu.exec(
+            self._notes_pdf_btn.mapToGlobal(QPoint(0, self._notes_pdf_btn.height() + 2)))
 
     def _fill_notes_pdf_menu(self):
         self._notes_pdf_menu.clear()
@@ -2135,11 +2154,13 @@ class PDFOcclusionDialog(QDialog):
         doc = self._doc_for_page(self._page_index) if self._pages else None
         self._title_btn.setVisible(doc is not None)
         self._sub_label.setVisible(doc is not None)
+        for w in (self._deck_label, self._deck_combo, self._notes_label, self._notes_pdf_btn):
+            w.setVisible(doc is not None)
         if doc is None:
             return
         name = doc["lecture"] or os.path.splitext(os.path.basename(doc["path"]))[0]
         fm = QFontMetrics(self._title_btn.font())
-        self._title_btn.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, 420))
+        self._title_btn.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, 300))
         local = self._page_index - doc["start"]
         self._sub_label.setText(f"{local + 1} of {doc['count']}")
         self._place_mode_seg()      # the count's width can change the corner's
