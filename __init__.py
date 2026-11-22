@@ -229,7 +229,7 @@ def _after_hello(reply) -> None:
 
 
 # Bump to show the announcement again for something new.
-ANNOUNCEMENT = 2
+ANNOUNCEMENT = 3
 
 
 def _announce() -> None:
@@ -241,10 +241,11 @@ def _announce() -> None:
     _record_version("announcement", ANNOUNCEMENT)
     box = QMessageBox(mw)
     box.setWindowTitle("PDF Occlusion")
-    box.setText("PDF Occlusion updated")
+    box.setText("PDF Occlusion Updated")
     box.setInformativeText(
-        "A cleaner, faster window. Auto can now make boxes, cards or a quiz, "
-        "and the deck screen lets you review a whole slide at a time."
+        "Auto is now Generate. It makes boxes, cards or a practice quiz from "
+        "your lecture, and your pages are now credits. Also new: Whole Slide "
+        "Review, and Slides and Notes buttons on the front of each card."
     )
     from aqt.qt import QIcon
     box.setIconPixmap(QIcon(os.path.join(os.path.dirname(__file__), "logo.svg")).pixmap(56, 56))
