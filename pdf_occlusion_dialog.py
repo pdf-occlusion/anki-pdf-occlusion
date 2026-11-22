@@ -743,7 +743,7 @@ class PDFOcclusionDialog(QDialog):
 
     def _recover_note(self, nid: int):
         """Rebuild this card's session from the cards made off the same PDF."""
-        progress = QProgressDialog("Finding This Card's Slides…", None, 0, 0, self)
+        progress = QProgressDialog("Finding This Card's Slides", None, 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(400)
 
@@ -1365,7 +1365,7 @@ class PDFOcclusionDialog(QDialog):
 
     def _fill_recent_menu(self):
         self._recent_menu.clear()
-        act = self._recent_menu.addAction("Open PDF…", self._open_pdf)
+        act = self._recent_menu.addAction("Open PDF", self._open_pdf)
         act.setShortcut(QKeySequence("Ctrl+O"))
         act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
         sessions = session_store.list_sessions(8)
@@ -1392,13 +1392,13 @@ class PDFOcclusionDialog(QDialog):
 
     def _render_paths(self, paths: list[str]) -> Optional[list[tuple[str, list[QImage]]]]:
         """Render every PDF, one shared progress dialog. None if cancelled."""
-        progress = QProgressDialog("Rendering PDF…", "Cancel", 0, 100, self)
+        progress = QProgressDialog("Rendering PDF", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(300)
 
         rendered: list[tuple[str, list[QImage]]] = []
         for path in paths:
-            progress.setLabelText(f"Rendering {os.path.basename(path)}…")
+            progress.setLabelText(f"Rendering {os.path.basename(path)}")
 
             def on_progress(done: int, total: int):
                 progress.setMaximum(total)
@@ -2494,7 +2494,7 @@ class PDFOcclusionDialog(QDialog):
                             f"{os.path.basename(loc)}: {e.strerror or e}")
 
         grand_total = sum(len(tc) for _, tc, _c in per_doc)
-        progress = QProgressDialog("Creating Cards…", "Cancel", 0, grand_total,
+        progress = QProgressDialog("Creating Cards", "Cancel", 0, grand_total,
                                    self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(300)

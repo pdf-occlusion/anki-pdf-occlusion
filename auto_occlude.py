@@ -1421,7 +1421,7 @@ class Run:
 
     def start(self):
         total = len(self.pages)
-        self.progress = QProgressDialog("Reading the slides…", "Cancel", 0, total * 2, self.dlg)
+        self.progress = QProgressDialog("Reading the slides", "Cancel", 0, total * 2, self.dlg)
         self.progress.setWindowTitle("Generate")
         self.progress.setWindowModality(Qt.WindowModality.WindowModal)
         self.progress.setMinimumDuration(0)
@@ -1488,7 +1488,7 @@ class Run:
         self._start_job()
 
     def _start_job(self):
-        self.progress.setLabelText("Reading the whole document…")
+        self.progress.setLabelText("Reading the whole document")
         doc = self.dlg._doc_for_page(self.pages[0][0])
         lecture = doc.get("lecture", "")
         whole = document_payload(self.dlg, doc, self.prepared, self.notes if self.s.get("use_notes") else "")
@@ -1525,7 +1525,7 @@ class Run:
             return self._make_quiz()
         what = (res.get("document") or {}).get("subject")
         if what:
-            self.progress.setLabelText(f"Occluding: {what}…")
+            self.progress.setLabelText(f"Occluding: {what}")
         self.queue = [self.prepared[i:i + self.batch] for i in range(0, len(self.prepared), self.batch)]
         self._next()
 
@@ -1571,7 +1571,7 @@ class Run:
 
     def _make_quiz(self):
         """A quiz is written from the whole lecture in one request, then opened in the browser."""
-        self.progress.setLabelText("Writing the questions…")
+        self.progress.setLabelText("Writing the questions")
         body = {"slides": [{k: v for k, v in c[4].items() if not k.startswith("_")} for c in self.prepared[:100]],
                 "settings": {"style": self.s.get("quiz_style") or "step1",
                              "count": int(self.s.get("quiz_count") or 20),

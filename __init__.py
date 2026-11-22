@@ -169,7 +169,7 @@ def _migrate_media() -> None:
         return
     # Progress is best-effort — a failure to show it must not stop the repair.
     try:
-        mw.progress.start(label="PDF Occlusion: repairing masks…")
+        mw.progress.start(label="PDF Occlusion: Repairing Masks")
     except Exception:
         pass
     try:

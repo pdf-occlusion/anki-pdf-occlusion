@@ -151,12 +151,12 @@ class ClozeChip(QFrame):
         if self.entry is None:
             return
         menu = QMenu(self)
-        menu.addAction("Edit…", lambda: self.activated.emit(self.entry))
+        menu.addAction("Edit", lambda: self.activated.emit(self.entry))
         menu.addAction(
             "Copy Text",
             lambda: QApplication.clipboard().setText(self.entry["text"]))
         menu.addSeparator()
-        menu.addAction("Delete Card…",
+        menu.addAction("Delete Card",
                        lambda: self.delete_requested.emit(self.entry))
         menu.exec(event.globalPos())
 

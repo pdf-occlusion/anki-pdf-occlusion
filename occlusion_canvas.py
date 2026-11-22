@@ -2283,8 +2283,8 @@ class OcclusionCanvas(QWidget):
                 self.update()
 
             note_act = QAction(
-                "Edit Note…  (N)" if any(b.note for b in self._selected)
-                else "Add Note…  (N)", menu)
+                "Edit Note  (N)" if any(b.note for b in self._selected)
+                else "Add Note  (N)", menu)
             note_act.triggered.connect(self.edit_note_selected)
             menu.addAction(note_act)
 
