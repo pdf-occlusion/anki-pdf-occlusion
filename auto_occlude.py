@@ -1361,7 +1361,6 @@ class AutoOccludeDialog(QDialog):
         self.start_btn.setToolTip(names[make])
         custom_missing = (make == "quiz" and self._picked(self.quiz_btns, "step1") == "custom"
                           and not self.custom.toPlainText().strip())
-        self.custom.setPlaceholderText("Required for the Custom style" if custom_missing else "")
         self.start_btn.setEnabled(signed and n > 0 and not short and not custom_missing)
 
     def _captions(self, make: str, scope: str):
