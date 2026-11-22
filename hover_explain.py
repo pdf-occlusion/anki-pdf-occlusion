@@ -279,39 +279,74 @@ def _paint_select(p, art, t, k):
     _cursor(p, cur, 1 - _ph(t, .84, .96), down)
 
 
+def _typed(p, x0, y, width, x, col):
+    """A line of text typing in a word at a time; returns where the caret is."""
+    n = math.floor(x * 5) / 5 if x < 1 else 1.0
+    _bar(p, QRectF(x0, y, width * n, 5), col)
+    return QPointF(x0 + width * n + 2, y)
+
+
+def _caret(p, at, k, alpha, t):
+    if at is not None and alpha > 0 and (t * 5.2) % 1 < .6:
+        p.setPen(QPen(_a(k.accent, alpha), 1.2))
+        p.drawLine(at + QPointF(0, -1), at + QPointF(0, 6))
+
+
 def _paint_text(p, art, t, k):
+    """Two things the Text tool writes: a text box on the slide, then a
+    label typed across an occlusion box."""
     s = _slide_rect(art)
     _slide(p, s, k)
     _content(p, s, k, labels=False)
-    fade = 1 - _ph(t, .86, .98)
-    spot = _up(s, .58, .34)
-    home = _up(s, .40, 1.02)
-    cur = _lerp_pt(home, spot, _io(_ph(t, .02, .20)))
-    cur = cur + QPointF(14, 18) * _io(_ph(t, .30, .44))
-    down = _ph(t, .20, .23) * (1 - _ph(t, .25, .28))
-    # the text box opens where you clicked, then the words type in
-    grow = _out(_ph(t, .24, .34))
+    _bar(p, _u(s, *_LABELS[2]), k.bar)
+    fade = 1 - _ph(t, .90, .99)
+    mask = _u(s, *_BOXES[2])
+
+    # 1) click an empty spot: a box opens and the words type in, the
+    #    format bar riding above it while it is selected
+    spot = _up(s, .58, .24)
+    full = _u(s, .55, .20, .38, .17)
+    grow = _out(_ph(t, .14, .22))
+    typing = _ph(t, .22, .40)
+    selected = grow * (1 - _ph(t, .44, .48))
     if grow > 0:
-        full = _u(s, .55, .30, .38, .36)
-        r = QRectF(full.x(), full.y(), full.width(), full.height())
-        r.setWidth(_lerp(8, full.width(), grow))
-        hint = 1 - _ph(t, .74, .82)
+        r = QRectF(full.x(), full.y(), _lerp(8, full.width(), grow), full.height())
         _rrect(p, r, 2, _a(QColor(255, 255, 255), fade * grow),
-               _a(k.hint, fade * grow * hint), 1)
-        lines = [(.28, .36, .58), (.20, .58, .72)]
-        caret = None
-        for i, (w, a0, a1) in enumerate(lines):
-            x = _ph(t, a0, a1)
-            n = math.floor(x * 5) / 5 if x < 1 else 1.0   # a word at a time
-            y = full.y() + 7 + i * 11
-            ww = w * s.width() * n
-            _bar(p, QRectF(full.x() + 6, y, ww, 5), _a(k.ink, fade))
-            if t >= a0 and (x < 1 or i == len(lines) - 1):
-                caret = QPointF(full.x() + 6 + ww + 2, y)
-        if caret is not None and hint > 0 and (t * 2.6 * 2) % 1 < .6:
-            p.setPen(QPen(_a(k.accent, fade * hint), 1.2))
-            p.drawLine(caret + QPointF(0, -1), caret + QPointF(0, 6))
-    _cursor(p, cur, fade * (1 - _ph(t, .44, .52)), down)
+               _a(k.hint, fade * selected), 1)
+        at = _typed(p, full.x() + 6, full.y() + full.height() / 2 - 2.5,
+                    .30 * s.width(), typing, _a(k.ink, fade))
+        if selected > 0:
+            bar = QRectF(full.center().x() - 22, full.y() - 13, 44, 9)
+            _rrect(p, bar, 4.5, _a(k.btn, selected), _a(k.btn_line, selected), 1)
+            for n, col in enumerate((k.ink, QColor(217, 48, 37), QColor(26, 115, 232), k.accent)):
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(_a(col, selected))
+                p.drawEllipse(QPointF(bar.x() + 9 + n * 9, bar.center().y()), 2.2, 2.2)
+            _caret(p, at, k, fade * selected, t)
+
+    # 2) click an occlusion box: its label types across the mask, in white
+    _box(p, mask, k, fade)
+    on_box = _ph(t, .58, .62)
+    label = _ph(t, .62, .80)
+    if on_box > 0:
+        _rrect(p, mask, 2, None, _a(k.accent, fade * on_box * (1 - _ph(t, .84, .88))), 1.5)
+        w = .22 * s.width()
+        at = _typed(p, mask.center().x() - w / 2, mask.center().y() - 2.5, w, label,
+                    _a(QColor(255, 255, 255), fade * .95))
+        _caret(p, at, k, fade * (1 - _ph(t, .82, .86)), t)
+
+    # the pointer: in from below, click the slide, then click the box
+    home = _up(s, .40, 1.02)
+    box_pt = mask.center() + QPointF(-mask.width() * .25, 0)
+    if t < .30:
+        cur = _lerp_pt(home, spot, _io(_ph(t, .02, .13)))
+        cur = cur + QPointF(12, 14) * _io(_ph(t, .20, .30))
+    else:
+        cur = _lerp_pt(spot + QPointF(12, 14), box_pt, _io(_ph(t, .44, .57)))
+        cur = cur + QPointF(10, 12) * _io(_ph(t, .62, .72))
+    down = max(_ph(t, .13, .15) * (1 - _ph(t, .16, .18)),
+               _ph(t, .57, .59) * (1 - _ph(t, .60, .62)))
+    _cursor(p, cur, fade * (1 - _ph(t, .76, .84)), down)
 
 
 def _paint_detect(p, art, t, k):
@@ -651,7 +686,7 @@ LABELS = {
 # shown as a second, smaller line.
 _LIVE_TIP = {"create"}
 
-_PERIOD = {"auto": 3.0, "create": 3.0, "zoom": 2.8, "slides": 3.0,
+_PERIOD = {"text": 3.8, "auto": 3.0, "create": 3.0, "zoom": 2.8, "slides": 3.0,
            "prev": 3.0, "next": 3.0}
 
 

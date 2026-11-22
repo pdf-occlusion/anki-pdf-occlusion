@@ -942,7 +942,7 @@ class PDFOcclusionDialog(QDialog):
         slider_act.setDefaultWidget(holder)
         zoom_menu.addAction(slider_act)
         zoom_menu.addSeparator()
-        self._fit_act = zoom_menu.addAction("Fit slide", self._zoom_fit)
+        self._fit_act = zoom_menu.addAction("Fit", self._zoom_fit)
         self._fit_act.setShortcut(QKeySequence("Ctrl+0"))
         # the window-level QShortcut does the work; this only shows it
         self._fit_act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
