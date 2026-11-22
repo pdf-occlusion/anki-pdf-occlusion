@@ -64,6 +64,7 @@ _LIGHT = {
     "btn": "#ffffff", "btn_line": "#d2d2d7", "btn_hover": "#f4f4f7",
     "btn_down": "#e8e8ed",
     "accent": "#6e5aa8", "accent_hover": "#634f9c", "accent_down": "#574590",
+    "accent_tint": "#efebf8", "accent_text": "#5b4796", "accent_tint_hover": "#e5dff4", "accent_tint_down": "#d9d1ee",
     "off_bg": "#e8e8ed", "off_fg": "#a1a1a6",
     "rail_on": "#dcd6ee", "pill": QColor(0, 0, 0, 115),
     "placeholder": "#ffffff", "shadow": 26,
@@ -76,6 +77,7 @@ _DARK = {
     "btn": "#3a3a3d", "btn_line": "#4a4a4e", "btn_hover": "#434347",
     "btn_down": "#4d4d52",
     "accent": "#7461b0", "accent_hover": "#7f6cbb", "accent_down": "#6956a3",
+    "accent_tint": "#2f2a40", "accent_text": "#c9bcf2", "accent_tint_hover": "#38314d", "accent_tint_down": "#41395a",
     "off_bg": "#3a3a3d", "off_fg": "#6e6e73",
     "rail_on": "#433b5e", "pill": QColor(0, 0, 0, 140),
     "placeholder": "#d8d8dc", "shadow": 90,
@@ -146,6 +148,13 @@ QToolButton#zoomBtn:hover {{ background:{c['hover']}; }}
 QToolButton#zoomBtn:disabled {{ color:{c['off_fg']}; }}
 QToolButton#zoomBtn::menu-indicator {{ image:none; width:0; }}
 
+QPushButton#generate {{ background:{c['accent_tint']}; color:{c['accent_text']};
+    font-weight:600; padding:0 14px; min-height:30px; border-radius:7px;
+    border:1.5px solid {c['accent']}; }}
+QPushButton#generate:hover {{ background:{c['accent_tint_hover']}; }}
+QPushButton#generate:pressed {{ background:{c['accent_tint_down']}; }}
+QPushButton#generate:disabled {{ background:{c['off_bg']}; color:{c['off_fg']};
+    border-color:{c['off_bg']}; }}
 QPushButton#secondary {{ background:{c['btn']}; color:{c['text']};
     font-weight:500; padding:0 13px; min-height:30px; border-radius:7px;
     border:1px solid {c['btn_line']}; }}
@@ -165,8 +174,17 @@ QWidget#stage {{ background:{c['stage']}; }}
 QScrollArea#stageScroll {{ background:{c['stage']}; border:none; }}
 
 QLabel#formLabel {{ color:{c['sub']}; }}
-QPushButton#notesBtn {{ text-align:left; padding:4px 26px 4px 8px; border-radius:5px;
+QPushButton#notesBtn {{ text-align:left; padding:5px 26px 5px 10px; border-radius:6px;
+    border:1px solid {c['btn_line']}; background:{c['btn']}; color:{c['text']}; min-height:20px; }}
+QFrame#popover QLineEdit {{ padding:5px 10px; border-radius:6px; min-height:20px;
     border:1px solid {c['btn_line']}; background:{c['btn']}; color:{c['text']}; }}
+QFrame#popover QComboBox {{ padding:5px 26px 5px 10px; border-radius:6px; min-height:20px;
+    border:1px solid {c['btn_line']}; background:{c['btn']}; color:{c['text']}; }}
+QFrame#popover QComboBox::drop-down {{ border:none; width:24px; }}
+QFrame#popover QComboBox::down-arrow {{ image:url("{_asset('caret_muted.svg')}"); width:8px; height:5px; }}
+QFrame#popover QComboBox QLineEdit {{ border:none; padding:0; background:transparent; min-height:0; }}
+QToolButton#pagerBtn {{ border:none; background:transparent; border-radius:6px; padding:0; }}
+QToolButton#pagerBtn:hover, QToolButton#pagerBtn:pressed {{ background:{c['hover']}; }}
 QPushButton#notesBtn:hover {{ background:{c['btn_hover']}; }}
 QPushButton#notesBtn::menu-indicator {{ image:url("{_asset('caret_muted.svg')}");
     subcontrol-origin:padding; subcontrol-position:right center; right:9px;
@@ -563,11 +581,13 @@ class _Popover(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.form = QFormLayout(self)
         self.form.setContentsMargins(16, 14, 16, 16)
-        self.form.setHorizontalSpacing(12)
+        self.form.setHorizontalSpacing(14)
         self.form.setVerticalSpacing(10)
         self.form.setLabelAlignment(Qt.AlignmentFlag.AlignRight
                                     | Qt.AlignmentFlag.AlignVCenter)
-        self.setFixedWidth(360)
+        # macOS keeps form fields at their small default width; fill the row instead
+        self.form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.setFixedWidth(440)
 
     def add_row(self, label: str, widget: QWidget):
         lab = QLabel(label)
@@ -585,6 +605,8 @@ class _Popover(QFrame):
         p.end()
 
     def show_under(self, anchor: QWidget):
+        for edit in self.findChildren(QLineEdit):
+            edit.setCursorPosition(0)       # show a long name from its start
         self.adjustSize()
         self.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 6)))
         self.show()
@@ -917,14 +939,17 @@ class PDFOcclusionDialog(QDialog):
         self._rail_btn.setChecked(bool(_cfg("show_slides", True)))
         self._prev_btn = bar_btn("prev", "Previous Slide", self._prev_page)
         self._next_btn = bar_btn("next", "Next Slide", self._next_page)
+        for b in (self._prev_btn, self._next_btn):
+            b.setObjectName("pagerBtn")
+            b.setFixedSize(26, 26)
+            b.setIconSize(QSize(16, 16))
+        self._sub_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sub_label.setMinimumWidth(52)
+
         left.addWidget(self._open_btn)
         left.addWidget(self._rail_btn)
         left.addSpacing(4)
-        left.addWidget(self._title_btn)
-        left.addWidget(self._sub_label)
-        left.addSpacing(2)
-        left.addWidget(self._prev_btn)
-        left.addWidget(self._next_btn)
+        left.addWidget(self._title_btn, 0, Qt.AlignmentFlag.AlignVCenter)
         left.addStretch(1)
 
         seg = QFrame()
@@ -982,7 +1007,7 @@ class PDFOcclusionDialog(QDialog):
         self._zoom_label.setMenu(zoom_menu)
 
         self._auto_btn = QPushButton("Generate")
-        self._auto_btn.setObjectName("secondary")
+        self._auto_btn.setObjectName("generate")
         self._auto_btn.setIconSize(QSize(18, 18))
         self._auto_btn.clicked.connect(self._open_auto_occlude)
 
@@ -1020,11 +1045,21 @@ class PDFOcclusionDialog(QDialog):
         self._populate_decks()
 
         # a pop-up button like the combos round it: Choose, Open, Remove
+        # a plain button that opens its menu itself: Qt drops the text padding of
+        # buttons that own a menu; the caret is a small label at the right edge
         self._notes_pdf_btn = QPushButton()
         self._notes_pdf_btn.setObjectName("notesBtn")
         self._notes_pdf_menu = QMenu(self)
         self._notes_pdf_menu.aboutToShow.connect(self._fill_notes_pdf_menu)
-        self._notes_pdf_btn.setMenu(self._notes_pdf_menu)
+        self._notes_pdf_btn.clicked.connect(lambda: self._notes_pdf_menu.exec(
+            self._notes_pdf_btn.mapToGlobal(QPoint(0, self._notes_pdf_btn.height() + 2))))
+        caret_row = QHBoxLayout(self._notes_pdf_btn)
+        caret_row.setContentsMargins(0, 0, 10, 0)
+        caret_row.addStretch(1)
+        caret = QLabel()
+        caret.setPixmap(QIcon(_asset("caret_muted.svg")).pixmap(QSize(8, 5)))
+        caret.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        caret_row.addWidget(caret)
 
 
         self._popover.add_row("Lecture", self._lecture_edit)
@@ -1070,6 +1105,18 @@ class PDFOcclusionDialog(QDialog):
         self._mode_ao_btn, self._mode_oa_btn = self._mode_btns["ao"], self._mode_btns["oa"]
         self._mode_seg.adjustSize()
         self._mode_seg.hide()
+
+        # previous, "3 of 9", next: bottom right of the stage
+        self._pager = QFrame(self._stage)
+        self._pager.setObjectName("seg")
+        prow = QHBoxLayout(self._pager)
+        prow.setContentsMargins(3, 3, 3, 3)
+        prow.setSpacing(0)
+        prow.addWidget(self._prev_btn)
+        prow.addWidget(self._sub_label)
+        prow.addWidget(self._next_btn)
+        self._pager.adjustSize()
+        self._pager.hide()
         self._stage.installEventFilter(self)
 
         # nothing open yet: one button in the middle
@@ -1232,7 +1279,7 @@ class PDFOcclusionDialog(QDialog):
                   self._detect_btn, self._cloze_btn):
             b.setIcon(_icon(b.property("_icon"), c))
         self._open_btn.setIcon(_icon("open", c))
-        self._auto_btn.setIcon(_icon("auto", c, 18, color=c["text"]))
+        self._auto_btn.setIcon(_icon("auto", c, 18, color=c["accent_text"]))
         self._title_btn.setIcon(_icon("caret", c, 14, color=c["sub"]))
         self._rail.viewport().update()
         self._scroll.viewport().update()
@@ -1791,15 +1838,20 @@ class PDFOcclusionDialog(QDialog):
         mode = self._page_modes.get(self._page_index) or self._default_mode()
         self._mode_btns[mode].setChecked(True)
         self._mode_seg.setVisible(bool(self._pages))
+        self._pager.setVisible(bool(self._pages))
         self._place_mode_seg()
 
     def _place_mode_seg(self):
-        """Bottom centre of the stage, over the slide's margin."""
-        seg = self._mode_seg
+        """The slide's mode in the stage's bottom-left corner, the slide
+        arrows in its bottom-right corner."""
+        seg, pager = self._mode_seg, self._pager
         seg.adjustSize()
-        seg.move((self._stage.width() - seg.width()) // 2,
-                 self._stage.height() - seg.height() - 14)
+        pager.adjustSize()
+        h = self._stage.height()
+        seg.move(14, h - seg.height() - 14)
+        pager.move(self._stage.width() - pager.width() - 14, h - pager.height() - 14)
         seg.raise_()
+        pager.raise_()
 
     def _set_page_mode(self, mode: str):
         if not self._pages:
@@ -2079,9 +2131,10 @@ class PDFOcclusionDialog(QDialog):
             return
         name = doc["lecture"] or os.path.splitext(os.path.basename(doc["path"]))[0]
         fm = QFontMetrics(self._title_btn.font())
-        self._title_btn.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, 340))
+        self._title_btn.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, 420))
         local = self._page_index - doc["start"]
         self._sub_label.setText(f"{local + 1} of {doc['count']}")
+        self._place_mode_seg()      # the count's width can change the corner's
 
     # -- thumbnails (see _SlideRail) -----------------------------------------
 

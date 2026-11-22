@@ -845,32 +845,28 @@ class _CreditMeter(QWidget):
         p.setFont(f)
         p.setPen(col)
         p.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), label)
-        if self.left is None:
-            p.end()
-            return
-        # the bar: the balance, with this run's share filled
-        x = w + 12
-        bar_w = 110
-        bar = QRectF(x, cy - 3, bar_w, 6)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(line)
-        p.drawRoundedRect(bar, 3, 3)
-        share = 1.0 if short or not self.left else min(1.0, self.need / self.left)
-        if share > 0:
-            p.setBrush(col)
-            p.drawRoundedRect(QRectF(x, cy - 3, max(6, bar_w * share), 6), 3, 3)
-        f2 = QFont(self.font())
-        f2.setPixelSize(12)
-        p.setFont(f2)
-        p.setPen(red if short else sub)
-        after = (f"Only {self.left:,} left" if short
-                 else f"{self.left - self.need:,} left after{self.suffix}")
-        p.drawText(QRectF(x + bar_w + 10, 0, self.width() - x - bar_w - 10, self.height()),
-                   int(Qt.AlignmentFlag.AlignVCenter), after)
         p.end()
 
 
-def _initial_icon(email: str, c: dict, size: int = 26):
+def _go_icon(size: int = 20):
+    """A plain white arrow: go."""
+    from aqt.qt import QIcon, QPainter, QPixmap, QColor, QPen, QPointF
+    pm = QPixmap(size * 2, size * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QPen(QColor(255, 255, 255), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                  Qt.PenJoinStyle.RoundJoin))
+    s = size
+    p.drawLine(QPointF(s * .22, s * .5), QPointF(s * .76, s * .5))
+    p.drawLine(QPointF(s * .52, s * .26), QPointF(s * .78, s * .5))
+    p.drawLine(QPointF(s * .52, s * .74), QPointF(s * .78, s * .5))
+    p.end()
+    return QIcon(pm)
+
+
+def _initial_icon(email: str, c: dict, size: int = 26, credits=None):
     from aqt.qt import QIcon, QPainter, QPixmap, QColor, QRectF, QFont
     pm = QPixmap(size * 2, size * 2)
     pm.setDevicePixelRatio(2)
@@ -937,12 +933,23 @@ class AutoOccludeDialog(QDialog):
         self.signin_btn = QPushButton("Sign In")
         self.signin_btn.setObjectName("secondary")
         self.signin_btn.clicked.connect(self._sign)
+        # the account: its initial, with the credit balance in a badge under it
+        self.credit_badge = QLabel()
+        self.credit_badge.setObjectName("creditBadge")
+        self.credit_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        who = QWidget()
+        wl = QVBoxLayout(who)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.setSpacing(3)
+        wl.addWidget(self.acct_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        wl.addWidget(self.credit_badge, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._who = who
         corner = QWidget()
         corner.setFixedWidth(84)
         cl = QHBoxLayout(corner)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addStretch(1)
-        cl.addWidget(self.acct_btn, 0, Qt.AlignmentFlag.AlignTop)
+        cl.addWidget(who, 0, Qt.AlignmentFlag.AlignTop)
         cl.addWidget(self.signin_btn, 0, Qt.AlignmentFlag.AlignTop)
         head.addWidget(corner, 0, Qt.AlignmentFlag.AlignTop)
         root.addLayout(head)
@@ -1051,7 +1058,7 @@ class AutoOccludeDialog(QDialog):
         self.start_btn = QPushButton()
         self.start_btn.setStyleSheet(primary_qss + "QPushButton{padding:0;}")
         self.start_btn.setFixedSize(52, 36)
-        self.start_btn.setIconSize(QSize(30, 30))
+        self.start_btn.setIconSize(QSize(20, 20))
         self.start_btn.setDefault(True)
         self.start_btn.clicked.connect(self._start)
         foot.addWidget(self.usage, 1)
@@ -1085,6 +1092,8 @@ class AutoOccludeDialog(QDialog):
             f"QLabel#usage[short=\"true\"] {{ color:#d93025; }}"
             f"QLabel#value {{ color:{c['text']}; }}"
             f"QLabel#note {{ color:{c['sub']}; }}"
+            f"QLabel#creditBadge {{ color:{c['accent']}; background:{c['btn']}; border:1px solid {c['accent']};"
+            f" border-radius:8px; padding:0 6px; font-size:10px; font-weight:600; min-height:15px; }}"
             f"QSpinBox#count {{ background:{c['btn']}; color:{c['text']}; border:1px solid {c['btn_line']};"
             f" border-radius:7px; padding:3px 4px; min-height:24px; }}"
             f"QToolButton#tile {{ background:{c['btn']}; color:{c['text']};"
@@ -1311,8 +1320,13 @@ class AutoOccludeDialog(QDialog):
         a = account()
         signed = bool(a.get("token"))
         b = self.balance or {}
-        self.acct_btn.setVisible(signed)
+        self._who.setVisible(signed)
         self.signin_btn.setVisible(not signed)
+        bal = _credits_left(b) if signed else None
+        self.credit_badge.setVisible(bal is not None)
+        if bal is not None:
+            self.credit_badge.setText(f"{bal:,}")
+            self.credit_badge.setToolTip(f"{bal:,} credits")
         if signed:
             self.acct_btn.setIcon(_initial_icon(a.get("email") or "", self.c))
         make = getattr(self, "make", "occlusion")
@@ -1333,7 +1347,7 @@ class AutoOccludeDialog(QDialog):
         self._captions(make, scope)
         self.topup_btn.setVisible(short)
         names = {"occlusion": "Make Boxes", "atomic": "Make Cards", "quiz": "Make Quiz"}
-        self.start_btn.setIcon(_preview(make, 56, white=True))
+        self.start_btn.setIcon(_go_icon(20))
         self.start_btn.setAccessibleName(names[make])
         self.start_btn.setToolTip(names[make])
         self.start_btn.setEnabled(signed and n > 0 and not short)
@@ -1343,20 +1357,20 @@ class AutoOccludeDialog(QDialog):
         n_all = self.slide_counts.get("all", 0)
         n_empty = self.slide_counts.get("empty", 0)
         slides = {
-            "current": "Only the slide you're on",
-            "empty": f"The {n_empty} slide{'s' if n_empty != 1 else ''} without boxes",
-            "all": (f"All {n_all} slides, replacing boxes" if make == "occlusion"
+            "current": "This slide only",
+            "empty": f"{n_empty} slide{'s' if n_empty != 1 else ''} without boxes",
+            "all": (f"All {n_all} slides, replaces boxes" if make == "occlusion"
                     else f"All {n_all} slides"),
         }
         amount = {
-            "fewer": "Key labels and facts only",
-            "balanced": "What a careful student would box",
-            "more": "Everything worth testing",
+            "fewer": "Main labels only",
+            "balanced": "Recommended",
+            "more": "Every label and fact",
         }
         styles = {
-            "complete": "Every testable fact",
-            "essentials": "High-yield facts only",
-            "scratch": "Defines each term first",
+            "complete": "All key facts",
+            "essentials": "High-yield only",
+            "scratch": "Starts with definitions",
         }
         self.scope_seg._note.setText(slides.get(scope, ""))
         self.density_seg._note.setText(amount.get(self._picked(self.density_btns, "balanced"), ""))
