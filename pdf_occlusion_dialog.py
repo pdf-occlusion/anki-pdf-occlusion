@@ -944,7 +944,10 @@ class PDFOcclusionDialog(QDialog):
             b.setFixedSize(26, 26)
             b.setIconSize(QSize(16, 16))
         self._sub_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_label.setMinimumWidth(52)
+        # wide enough for "100 of 100" in its 14 px font, so the box never clips
+        f = QFont(self._sub_label.font())
+        f.setPixelSize(14)
+        self._sub_label.setFixedWidth(QFontMetrics(f).horizontalAdvance("100 of 100") + 14)
 
         left.addWidget(self._open_btn)
         left.addWidget(self._rail_btn)
@@ -1115,7 +1118,7 @@ class PDFOcclusionDialog(QDialog):
         prow.addWidget(self._prev_btn)
         prow.addWidget(self._sub_label)
         prow.addWidget(self._next_btn)
-        self._pager.adjustSize()
+        self._pager.setFixedSize(3 + 26 + self._sub_label.width() + 26 + 3, 34)
         self._pager.hide()
         self._stage.installEventFilter(self)
 
@@ -1852,7 +1855,6 @@ class PDFOcclusionDialog(QDialog):
         arrows in its bottom-right corner."""
         seg, pager = self._mode_seg, self._pager
         seg.adjustSize()
-        pager.adjustSize()
         h = self._stage.height()
         seg.move(14, h - seg.height() - 14)
         pager.move(self._stage.width() - pager.width() - 14, h - pager.height() - 14)
