@@ -53,25 +53,25 @@ DENSITY = ("density", "Cards", [
     ("more", "More"),
 ])
 MORE = [
-    ("labels", "Figure labels", [
-        ("auto", "Decide for each document"),
-        ("key", "Only the ones that matter"),
-        ("all", "Every label"),
+    ("labels", "Figure Labels", [
+        ("auto", "Decide for Each Document"),
+        ("key", "Only the Ones That Matter"),
+        ("all", "Every Label"),
     ]),
-    ("text", "Bullet text", [
-        ("key_phrase", "Hide the key phrase"),
-        ("whole_point", "Hide the whole point"),
+    ("text", "Bullet Text", [
+        ("key_phrase", "Hide the Key Phrase"),
+        ("whole_point", "Hide the Whole Point"),
     ]),
     ("tables", "Tables", [
-        ("per_cell", "One card per cell"),
-        ("per_row", "One card per row"),
+        ("per_cell", "One Card per Cell"),
+        ("per_row", "One Card per Row"),
     ]),
 ]
 CHOICES = MORE
 SCOPES = [
-    ("empty", "Only slides I haven't boxed"),
-    ("current", "Only this slide"),
-    ("all", "All slides (clears my boxes)"),
+    ("empty", "Only Slides I Haven't Boxed"),
+    ("current", "Only This Slide"),
+    ("all", "All Slides (Clears My Boxes)"),
 ]
 DEFAULTS = {
     "density": "balanced",
@@ -635,7 +635,7 @@ class SignIn:
             f"Your browser opened a page showing code {self.code}.\n"
             "Sign in with Google there, then click “link this anki”.",
             "Cancel", 0, 0, self.parent)
-        self.box.setWindowTitle("Sign in")
+        self.box.setWindowTitle("Sign In")
         # in front of the Auto-occlude window until signed in or cancelled
         self.box.setWindowModality(Qt.WindowModality.WindowModal)
         self.box.setMinimumDuration(0)
@@ -693,14 +693,14 @@ MAKES = [("occlusion", "Boxes"), ("atomic", "Cards"), ("quiz", "Quiz")]
 CARD_STYLES = [
     ("complete", "Complete", ""),
     ("essentials", "Essentials", "Only what exams test most; skip anything secondary."),
-    ("scratch", "From scratch", "I am new to this topic: start with what each term means and build up; plain words."),
+    ("scratch", "From Scratch", "I am new to this topic: start with what each term means and build up; plain words."),
 ]
 # Quiz styles, named for the kind of question rather than one exam; the
 # caption says which exams each one is for. Values are the server's.
 QUIZ_STYLES = [
-    ("step1", "Basic science", "Step 1, COMLEX 1, blocks"),
-    ("shelf", "Clinical", "Step 2 CK, shelf, Step 3"),
-    ("recall", "Quick recall", "Any exam"),
+    ("step1", "Basic Science", "Step 1, COMLEX 1, Blocks"),
+    ("shelf", "Clinical", "Step 2 CK, Shelf, Step 3"),
+    ("recall", "Quick Recall", "Any Exam"),
 ]
 QUIZ_COUNT = (5, 40)       # the server's limits
 
@@ -891,7 +891,7 @@ class AutoOccludeDialog(QDialog):
         cw = QWidget(); cw.setLayout(count_row)
         self._add_row("quiz_count", "Questions", cw)
 
-        self.notes = QCheckBox("Use the notes PDF")
+        self.notes = QCheckBox("Use the Notes PDF")
         self.notes.setChecked(bool(s["use_notes"]) and has_notes)
         self._add_row("notes", "", self.notes)
         self._has_notes = has_notes
@@ -920,7 +920,7 @@ class AutoOccludeDialog(QDialog):
         for r, item in enumerate(MORE):
             form.addWidget(self._label(item[1]), r, 0)
             form.addWidget(self._combo(item, s), r, 1)
-        self.skip_admin = QCheckBox("Skip title, objective and reference slides")
+        self.skip_admin = QCheckBox("Skip Title, Objective and Reference Slides")
         self.skip_admin.setChecked(bool(s["skip_admin"]))
         form.addWidget(self.skip_admin, len(MORE), 1)
         mrow = QHBoxLayout()
@@ -935,7 +935,7 @@ class AutoOccludeDialog(QDialog):
         foot.setSpacing(8)
         self.usage = QLabel()
         self.usage.setObjectName("usage")
-        self.topup_btn = QPushButton("Top up")
+        self.topup_btn = QPushButton("Top Up")
         self.topup_btn.setObjectName("secondary")
         self.topup_btn.clicked.connect(lambda: webbrowser.open(f"{SITE}/pricing/"))
         cancel = QPushButton("Cancel")
@@ -1086,8 +1086,8 @@ class AutoOccludeDialog(QDialog):
         self.make = make
         boxes, cards, quiz = make == "occlusion", make == "atomic", make == "quiz"
         keep = scope or self._picked(self.scope_btns, None)
-        options = ([("current", "This slide"), ("empty", "Unboxed"), ("all", "All")] if boxes
-                   else [("current", "This slide"), ("all", "All")])
+        options = ([("current", "This Slide"), ("empty", "Unboxed"), ("all", "All")] if boxes
+                   else [("current", "This Slide"), ("all", "All")])
         seg = self.scope_seg._seg
         for b in list(self.scope_btns.values()):
             seg._group.removeButton(b)
@@ -1118,7 +1118,7 @@ class AutoOccludeDialog(QDialog):
 
     def _show_more(self, on: bool):
         self.more.setVisible(on)
-        self.more_toggle.setText("Fewer settings" if on else "More settings")
+        self.more_toggle.setText("Fewer Settings" if on else "More Settings")
         self.adjustSize()
 
     def _combo(self, item, s) -> QComboBox:
@@ -1159,20 +1159,20 @@ class AutoOccludeDialog(QDialog):
         m.clear()
         a = account()
         b = self.balance or {}
-        m.addAction(a.get("email") or "Signed in").setEnabled(False)
+        m.addAction(a.get("email") or "Signed In").setEnabled(False)
         parts = []
         if b.get("plan") in ("monthly", "yearly"):
-            parts.append(f"{b['plan'].capitalize()} plan")
+            parts.append(f"{b['plan'].capitalize()} Plan")
         left = _credits_left(b)
         if left is not None:
-            parts.append(f"{left:,} credits")
+            parts.append(f"{left:,} Credits")
         if parts:
             m.addAction(", ".join(parts)).setEnabled(False)
         m.addSeparator()
-        m.addAction("Top up", lambda: webbrowser.open(f"{SITE}/pricing/"))
+        m.addAction("Top Up", lambda: webbrowser.open(f"{SITE}/pricing/"))
         m.addAction("Account", lambda: webbrowser.open(f"{SITE}/account/"))
         m.addSeparator()
-        m.addAction("Sign out", self._sign)
+        m.addAction("Sign Out", self._sign)
 
     def _sign(self):
         if account().get("token"):
@@ -1200,7 +1200,7 @@ class AutoOccludeDialog(QDialog):
         scope = self._picked(self.scope_btns, "all")
         n = self.slide_counts.get(scope, 0)
         q = self.quiz_count.value()
-        self.count_label.setText(f"{q} questions")
+        self.count_label.setText(f"{q} Questions")
         costs = b.get("credit_costs") or {}
         # one balance: a credit per slide for boxes or cards, two per quiz question
         need = q * int(costs.get("question", 2)) if make == "quiz" else n * int(costs.get("slide", 1))
@@ -1221,8 +1221,8 @@ class AutoOccludeDialog(QDialog):
         self.usage.style().unpolish(self.usage)
         self.usage.style().polish(self.usage)
         self.topup_btn.setVisible(short)
-        self.start_btn.setText("Sign in" if not signed else
-                               {"occlusion": "Make boxes", "atomic": "Make cards", "quiz": "Make quiz"}[make])
+        self.start_btn.setText("Sign In" if not signed else
+                               {"occlusion": "Make Boxes", "atomic": "Make Cards", "quiz": "Make Quiz"}[make])
         self.start_btn.setEnabled(not signed or (n > 0 and not short))
 
     def _start(self):
@@ -1285,7 +1285,7 @@ class Run:
     def start(self):
         total = len(self.pages)
         self.progress = QProgressDialog("Reading the slides…", "Cancel", 0, total * 2, self.dlg)
-        self.progress.setWindowTitle("Auto-occlude")
+        self.progress.setWindowTitle("Generate")
         self.progress.setWindowModality(Qt.WindowModality.WindowModal)
         self.progress.setMinimumDuration(0)
         self.progress.canceled.connect(self._cancel)
@@ -1376,7 +1376,7 @@ class Run:
                 webbrowser.open(f"{SITE}/pricing/")
             elif isinstance(err, ServerError) and err.status == 401:
                 sign_out()
-                showWarning("Your sign-in has expired. Sign in again from Auto-occlude.",
+                showWarning("Your sign-in has expired. Sign in again from Generate.",
                             parent=self.dlg, title="PDF Occlusion")
             else:
                 showWarning(str(err), parent=self.dlg, title="PDF Occlusion")

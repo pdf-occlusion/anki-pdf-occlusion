@@ -733,8 +733,8 @@ PAINTERS = {
 
 # name, shortcut (portable text, shown in the platform's own notation)
 LABELS = {
-    "mode_ao": ("Hide all", ""),
-    "mode_oa": ("Hide one", ""),
+    "mode_ao": ("Hide All", ""),
+    "mode_oa": ("Hide One", ""),
     "open": ("Open PDF", "Ctrl+O"),
     "lecture": ("Lecture", ""),
     "slides": ("Slides", ""),
@@ -744,10 +744,10 @@ LABELS = {
     "select": ("Select", "V"),
     "text": ("Text", "T"),
     "detect": ("Detect", "F"),
-    "cloze": ("Cloze cards", "Ctrl+Shift+V"),
+    "cloze": ("Cloze Cards", "Ctrl+Shift+V"),
     "zoom": ("Zoom", "Ctrl+= Ctrl+-"),
     "auto": ("Generate", ""),
-    "create": ("Create cards", ""),
+    "create": ("Create Cards", ""),
 }
 
 # Keys whose widget tooltip says something live (the card counts on Create),

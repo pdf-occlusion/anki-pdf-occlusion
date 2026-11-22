@@ -297,7 +297,7 @@ class ClozeComposer(QWidget):
         self._extra.installEventFilter(self)   # Return adds, never "Create All"
         root.addWidget(self._extra)
 
-        self._slide_check = QCheckBox("Add slide as extra")
+        self._slide_check = QCheckBox("Add Slide as Extra")
         self._slide_check.setChecked(True)
         self._slide_check.setToolTip("Slide goes under the answer")
         root.addWidget(self._slide_check)
@@ -354,7 +354,7 @@ class ClozeComposer(QWidget):
         self._text.setPlainText(entry.get("text", ""))
         self._extra.setText(entry.get("extra", ""))
         self._slide_check.setChecked(bool(entry.get("slide", True)))
-        self._title.setText("Editing card")
+        self._title.setText("Editing Card")
         self._add_btn.setText(f"Save  {_native('Ctrl+Return')}")
         self._cancel_btn.setVisible(True)
         self.refresh_slide()

@@ -250,7 +250,7 @@ def _announce() -> None:
     from aqt.qt import QIcon
     box.setIconPixmap(QIcon(os.path.join(os.path.dirname(__file__), "logo.svg")).pixmap(56, 56))
     open_btn = box.addButton("Open PDF Occlusion", QMessageBox.ButtonRole.AcceptRole)
-    box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
+    box.addButton("Not Now", QMessageBox.ButtonRole.RejectRole)
     telemetry.track("announcement_shown", n=ANNOUNCEMENT)
     box.exec()
     opened = box.clickedButton() is open_btn
@@ -527,11 +527,11 @@ _SWITCH_HTML = """
   <button class="one%(one_on)s" onclick="pycmd('pdfocc_mode:one')">
     <svg viewBox="0 0 72 44"><rect class="s" x="4" y="4" width="64" height="36" rx="3"/>
       <rect class="m" x="12" y="12" width="20" height="6"/><rect class="t" x="12" y="24" width="28" height="6"/>
-      <rect class="m" x="44" y="12" width="16" height="6"/></svg>One card</button>
+      <rect class="m" x="44" y="12" width="16" height="6"/></svg>One Card</button>
   <button class="all%(all_on)s" onclick="pycmd('pdfocc_mode:slide')">
     <svg viewBox="0 0 72 44"><rect class="s" x="4" y="4" width="64" height="36" rx="3"/>
       <rect class="m" x="12" y="12" width="20" height="6"/><rect class="m" x="12" y="24" width="28" height="6"/>
-      <rect class="m" x="44" y="12" width="16" height="6"/><rect class="m" x="44" y="24" width="16" height="6"/></svg>Whole slide</button>
+      <rect class="m" x="44" y="12" width="16" height="6"/><rect class="m" x="44" y="24" width="16" height="6"/></svg>Whole Slide</button>
 </div>"""
 
 

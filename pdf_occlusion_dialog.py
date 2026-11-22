@@ -743,7 +743,7 @@ class PDFOcclusionDialog(QDialog):
 
     def _recover_note(self, nid: int):
         """Rebuild this card's session from the cards made off the same PDF."""
-        progress = QProgressDialog("Finding this card's slides…", None, 0, 0, self)
+        progress = QProgressDialog("Finding This Card's Slides…", None, 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(400)
 
@@ -915,8 +915,8 @@ class PDFOcclusionDialog(QDialog):
 
         self._rail_btn = bar_btn("rail", "Slides", self._toggle_rail, checkable=True)
         self._rail_btn.setChecked(bool(_cfg("show_slides", True)))
-        self._prev_btn = bar_btn("prev", "Previous slide", self._prev_page)
-        self._next_btn = bar_btn("next", "Next slide", self._next_page)
+        self._prev_btn = bar_btn("prev", "Previous Slide", self._prev_page)
+        self._next_btn = bar_btn("next", "Next Slide", self._next_page)
         left.addWidget(self._open_btn)
         left.addWidget(self._rail_btn)
         left.addSpacing(4)
@@ -987,7 +987,7 @@ class PDFOcclusionDialog(QDialog):
         self._auto_btn.clicked.connect(self._open_auto_occlude)
 
         self._create_btn = _CountButton()
-        self._create_btn.setAccessibleName("Create cards")
+        self._create_btn.setAccessibleName("Create Cards")
         self._create_btn.setFixedSize(48, 34)
         self._create_btn.setIconSize(QSize(20, 20))
         self._create_btn.setObjectName("primary")
@@ -1056,7 +1056,7 @@ class PDFOcclusionDialog(QDialog):
         mrow.setContentsMargins(3, 3, 3, 3)
         mrow.setSpacing(2)
         self._mode_btns = {}
-        for mode, label in (("ao", "Hide all"), ("oa", "Hide one")):
+        for mode, label in (("ao", "Hide All"), ("oa", "Hide One")):
             b = QToolButton()
             b.setObjectName("segBtn")
             b.setCheckable(True)
@@ -1314,7 +1314,7 @@ class PDFOcclusionDialog(QDialog):
         start_dir = os.path.dirname(doc.get("notes_pdf") or doc["path"])
         self._popover.hide()
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choose lecture notes PDF", start_dir, "PDF Files (*.pdf)"
+            self, "Choose Lecture Notes PDF", start_dir, "PDF Files (*.pdf)"
         )
         if path:
             doc["notes_pdf"] = path
@@ -2494,7 +2494,7 @@ class PDFOcclusionDialog(QDialog):
                             f"{os.path.basename(loc)}: {e.strerror or e}")
 
         grand_total = sum(len(tc) for _, tc, _c in per_doc)
-        progress = QProgressDialog("Creating cards…", "Cancel", 0, grand_total,
+        progress = QProgressDialog("Creating Cards…", "Cancel", 0, grand_total,
                                    self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(300)
