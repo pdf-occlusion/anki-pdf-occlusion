@@ -22,7 +22,7 @@ import time
 from typing import Optional
 
 from aqt import mw
-from aqt.qt import (QAbstractButton, QColor, QDialog, QFrame, QGridLayout,
+from aqt.qt import (QAbstractButton, QColor, QDialog, QFont, QFrame, QGridLayout,
                     QHBoxLayout, QLabel, QPainter, QPen, QPixmap, QPointF,
                     QRectF, QShortcut, QKeySequence, QSize, Qt,
                     QTimer, QVBoxLayout, QWidget)
@@ -152,6 +152,8 @@ def _palette() -> dict:
         "q_other_hover": QColor(*(int(v + (255 - v) * 0.55) for v in rgb)),
         "q_good": QColor("#5aa877" if night else "#3d8b5a"),
         "q_again": QColor("#d46c63" if night else "#c0554b"),
+        "q_hard": QColor("#d1a24f" if night else "#a8781f"),
+        "q_easy": QColor("#6ea0dc" if night else "#3d76b5"),
         "q_icon": QColor(c["icon"]),
         "q_icon_off": QColor(c["icon_off"]),
         "q_hover": QColor(255, 255, 255, 22) if night else QColor(0, 0, 0, 14),
@@ -435,7 +437,7 @@ class _SlideView(QWidget):
             if ease:
                 # a soft ring settles round the answer, green for right, red for wrong
                 e = _out(A.t(("ring", cid)))
-                col = c["q_good"] if ease > 1 else c["q_again"]
+                col = c[{1: "q_again", 2: "q_hard", 3: "q_good", 4: "q_easy"}.get(ease, "q_good")]
                 off = 3 + 7 * (1 - e)
                 for q in rects:
                     rr = q.adjusted(-off, -off, off, off)
@@ -501,8 +503,10 @@ class _SlideView(QWidget):
 # ------------------------------------------------------------ bottom bar --
 
 class _GradeButton(QAbstractButton):
-    """One side of the grade control: a drawn cross or check. Lit (raised,
-    coloured) while a revealed box waits for a mark, flat grey otherwise."""
+    """One of Anki's four answers, as its word. Lit (raised, coloured) while
+    a revealed box waits for a mark, flat grey otherwise."""
+
+    NAMES = {"again": "Again", "hard": "Hard", "good": "Good", "easy": "Easy"}
 
     FADE_S = 0.12
     FLASH_S = 0.16
@@ -513,13 +517,13 @@ class _GradeButton(QAbstractButton):
         self.c = palette
         self.anim = _Anim(self)
         self._lit = False
-        self.setFixedSize(52, 32)
+        self.setFixedSize(68, 32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setEnabled(False)
 
     def sizeHint(self):
-        return QSize(52, 32)
+        return QSize(68, 32)
 
     def changeEvent(self, ev):
         super().changeEvent(ev)
@@ -559,21 +563,16 @@ class _GradeButton(QAbstractButton):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(c["q_hover"])
             p.drawRoundedRect(r, 6, 6)
-        on = c["q_again"] if self.kind == "again" else c["q_good"]
+        on = c["q_" + self.kind]
         off = c["q_icon_off"]
         ink = QColor(int(_lerp(off.red(), on.red(), lit)), int(_lerp(off.green(), on.green(), lit)),
                      int(_lerp(off.blue(), on.blue(), lit)))
-        pen = QPen(ink, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        cx, cy = self.width() / 2, self.height() / 2
-        if self.kind == "again":
-            d = 5.0
-            p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
-            p.drawLine(QPointF(cx + d, cy - d), QPointF(cx - d, cy + d))
-        else:
-            p.drawPolyline([QPointF(cx - 6, cy + 0.5), QPointF(cx - 1.8, cy + 4.6),
-                            QPointF(cx + 6.2, cy - 4.6)])
+        f = QFont(self.font())
+        f.setPixelSize(13)
+        f.setWeight(QFont.Weight.DemiBold)
+        p.setFont(f)
+        p.setPen(ink)
+        p.drawText(QRectF(self.rect()), int(Qt.AlignmentFlag.AlignCenter), self.NAMES[self.kind])
         p.end()
 
 
@@ -639,19 +638,20 @@ class SlideReview(QDialog):
             f"QLabel#count {{ color:{c['sub']}; font-size:13px; }}")
 
         self.view = _SlideView(self, self._reveal)
-        self.wrong = _GradeButton("again", c)
-        self.right = _GradeButton("good", c)
-        self.wrong.setToolTip("Again (1)")
-        self.right.setToolTip("Good (3)")
-        self.wrong.clicked.connect(lambda: self._grade(1))
-        self.right.clicked.connect(lambda: self._grade(3))
+        self.grade_btns = {}
+        for ease, kind in ((1, "again"), (2, "hard"), (3, "good"), (4, "easy")):
+            b = _GradeButton(kind, c)
+            b.setToolTip(f"{_GradeButton.NAMES[kind]} ({ease})")
+            b.clicked.connect(lambda _=False, e=ease: self._grade(e))
+            self.grade_btns[ease] = b
+        self.wrong, self.right = self.grade_btns[1], self.grade_btns[3]
         seg = QFrame()
         seg.setObjectName("seg")
         srow = QHBoxLayout(seg)
         srow.setContentsMargins(3, 3, 3, 3)
         srow.setSpacing(2)
-        srow.addWidget(self.wrong)
-        srow.addWidget(self.right)
+        for ease in (1, 2, 3, 4):
+            srow.addWidget(self.grade_btns[ease])
         self.count = QLabel()
         self.count.setObjectName("count")
         self.count.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -670,8 +670,8 @@ class SlideReview(QDialog):
         lay.addWidget(self.view, 1)
         lay.addWidget(self.bar)
         QShortcut(QKeySequence("Space"), self, activated=self._space)
-        QShortcut(QKeySequence("1"), self, activated=lambda: self._grade(1, key=True))
-        QShortcut(QKeySequence("3"), self, activated=lambda: self._grade(3, key=True))
+        for ease in (1, 2, 3, 4):
+            QShortcut(QKeySequence(str(ease)), self, activated=lambda e=ease: self._grade(e, key=True))
         self.resize(1200, 780)
         self._next_slide()
 
@@ -725,7 +725,7 @@ class SlideReview(QDialog):
             return
         answer_card(self.col, self.cards[cid], ease)
         if key:
-            (self.wrong if ease == 1 else self.right).flash()
+            self.grade_btns[ease].flash()
         self.view.grade(cid, ease)
         self.done_n += 1
         self.bar.set_progress(self.done_n / self.total)
@@ -745,8 +745,8 @@ class SlideReview(QDialog):
         open_ = (i is not None and not self._advancing
                  and regions[i]["cid"] in self.view.revealed
                  and regions[i]["cid"] not in self.view.graded)
-        self.wrong.setEnabled(open_)
-        self.right.setEnabled(open_)
+        for b in self.grade_btns.values():
+            b.setEnabled(open_)
         self.view.update()
 
     def done(self, r):
@@ -758,14 +758,29 @@ class SlideReview(QDialog):
 
 
 def answer_card(col, card, ease: int) -> None:
-    """Schedule one card as if answered in the reviewer (1 = Again, 3 = Good)."""
-    sched = col.sched
-    if hasattr(sched, "answerCard"):
-        sched.answerCard(card, ease)
-    else:   # very new Anki: build the answer from the card's scheduling states
-        states = sched.get_scheduling_states(card.id)
-        answer = sched.build_answer(card=card, states=states, rating=ease - 1)
-        sched.answer_card(answer)
+    """Schedule one card as if answered in the reviewer (1 Again, 2 Hard,
+    3 Good, 4 Easy).
+
+    Anki's scheduler keeps a queue for the deck being studied and refuses any
+    card but the one at its top ("not at top of queue"). A slide's boxes are
+    answered in slide order, not queue order, so when that happens the queue
+    is dropped (selecting the current deck again rebuilds it) and the answer
+    is made again."""
+    def once():
+        sched = col.sched
+        if hasattr(sched, "answerCard"):
+            sched.answerCard(card, ease)
+        else:   # very new Anki: build the answer from the card's scheduling states
+            states = sched.get_scheduling_states(card.id)
+            answer = sched.build_answer(card=card, states=states, rating=ease - 1)
+            sched.answer_card(answer)
+    try:
+        once()
+    except Exception as e:  # noqa: BLE001 - anki.errors.InvalidInput on most versions
+        if "top of queue" not in str(e):
+            raise
+        col.decks.set_current(col.decks.get_current_id())
+        once()
 
 
 def due_card_ids(col, deck_name: Optional[str] = None) -> list:
