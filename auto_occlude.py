@@ -698,9 +698,9 @@ CARD_STYLES = [
 # Quiz styles, named for the kind of question rather than one exam; the
 # caption says which exams each one is for. Values are the server's.
 QUIZ_STYLES = [
-    ("step1", "Basic Science", "Step 1, COMLEX 1, Blocks"),
-    ("shelf", "Clinical", "Step 2 CK, Shelf, Step 3"),
-    ("recall", "Quick Recall", "Any Exam"),
+    ("step1", "Basic Science", "Patient cases that ask why: the mechanism. For Step 1 and block exams."),
+    ("shelf", "Clinical", "Patient cases that ask what next: diagnosis and treatment. For Step 2 CK and shelf exams."),
+    ("recall", "Quick Recall", "Short questions on one fact each, for quick review."),
 ]
 QUIZ_COUNT = (5, 40)       # the server's limits
 
@@ -976,19 +976,13 @@ class AutoOccludeDialog(QDialog):
             s.get("card_style") if s.get("card_style") in [v for v, _, _ in CARD_STYLES] else "complete")
         self._add_row("card_style", "Style", self.card_seg)
 
-        quiz_tiles = QHBoxLayout()
-        quiz_tiles.setSpacing(8)
-        self.quiz_group = QButtonGroup(self)
-        self.quiz_btns = {}
-        for value, name, exams in QUIZ_STYLES:
-            b = self._tile(name, _preview(value), 152, 92, 40, caption=exams)
-            b.setChecked(value == (s.get("quiz_style") or "step1"))
-            self.quiz_group.addButton(b)
-            self.quiz_btns[value] = b
-            quiz_tiles.addWidget(b)
-        quiz_tiles.addStretch(1)
-        qw = QWidget(); qw.setLayout(quiz_tiles); quiz_tiles.setContentsMargins(0, 0, 0, 0)
-        self._add_row("quiz_style", "Style", qw, top=True)
+        # quiz styles: the same segmented control as the card styles; the exams
+        # each one suits are the note beside it
+        self.quiz_seg, self.quiz_btns = self._segmented(
+            [(v, n) for v, n, _ in QUIZ_STYLES],
+            s.get("quiz_style") if s.get("quiz_style") in [v for v, _, _ in QUIZ_STYLES] else "step1",
+            below=True)
+        self._add_row("quiz_style", "Style", self.quiz_seg, top=True)
 
         count_row = QHBoxLayout()
         count_row.setContentsMargins(0, 0, 0, 0)
@@ -1123,7 +1117,7 @@ class AutoOccludeDialog(QDialog):
             f = b.font(); f.setPointSizeF(max(8.5, f.pointSizeF() - 1.5)); b.setFont(f)
         return b
 
-    def _segmented(self, options, current=None):
+    def _segmented(self, options, current=None, below=False):
         from aqt.qt import QFrame, QToolButton
         from aqt.qt import QSizePolicy
         seg = QFrame()
@@ -1139,15 +1133,28 @@ class AutoOccludeDialog(QDialog):
         for value, label in options:
             self._seg_add(seg, btns, value, label, value == current)
         wrap = QWidget()
-        wl = QHBoxLayout(wrap)
-        wl.setContentsMargins(0, 0, 0, 0)
-        wl.setSpacing(12)
-        wl.addWidget(seg)
         note = QLabel()
         note.setObjectName("note")
-        note.setMaximumWidth(210)
-        wl.addWidget(note)
-        wl.addStretch(1)
+        if below:
+            # a longer description: one line under the buttons, across the column
+            wl = QVBoxLayout(wrap)
+            wl.setContentsMargins(0, 0, 0, 0)
+            wl.setSpacing(6)
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(seg)
+            row.addStretch(1)
+            wl.addLayout(row)
+            note.setWordWrap(True)
+            wl.addWidget(note)
+        else:
+            wl = QHBoxLayout(wrap)
+            wl.setContentsMargins(0, 0, 0, 0)
+            wl.setSpacing(12)
+            wl.addWidget(seg)
+            note.setMaximumWidth(210)
+            wl.addWidget(note)
+            wl.addStretch(1)
         wrap._seg = seg
         wrap._note = note
         return wrap, btns
@@ -1375,6 +1382,8 @@ class AutoOccludeDialog(QDialog):
         self.scope_seg._note.setText(slides.get(scope, ""))
         self.density_seg._note.setText(amount.get(self._picked(self.density_btns, "balanced"), ""))
         self.card_seg._note.setText(styles.get(self._picked(self.card_btns, "complete"), ""))
+        exams = {v: e for v, _n, e in QUIZ_STYLES}
+        self.quiz_seg._note.setText(exams.get(self._picked(self.quiz_btns, "step1"), ""))
 
     def _start(self):
         if not account().get("token"):
