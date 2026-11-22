@@ -978,6 +978,10 @@ class OcclusionCanvas(QWidget):
                 self.annotations_changed.emit()
         else:
             self.set_box_label(ident, text)
+        if kind == "annot" and self._tool != "text":
+            # typed into from Select: nothing stays selected once you're done
+            self._annot_sel = None
+            self._sync_textbar()
         self.update()
 
     def eventFilter(self, obj, ev):
@@ -1018,7 +1022,8 @@ class OcclusionCanvas(QWidget):
     # ---------------------------------------------------------- format bar
     def _sync_textbar(self):
         """Show the format bar above the selected text box, or hide it."""
-        a = self._annot_by_id(self._annot_sel) if (self._tool == "text" and self._annot_sel) else None
+        typing = bool(self._editing and self._editing[0] == "annot")
+        a = self._annot_by_id(self._annot_sel) if ((self._tool == "text" or typing) and self._annot_sel) else None
         if a is None or not self.isVisible():
             if self._textbar is not None and self._textbar.isVisible():
                 self._textbar.hide()
@@ -2094,7 +2099,8 @@ class OcclusionCanvas(QWidget):
             self._annot_move = None
             if moved:
                 self._commit_annots()
-            elif self._tool == "text":
+            else:
+                # a click (no drag) types into it, in Select as in Text
                 self._begin_edit("annot", a["id"])
             return
 
