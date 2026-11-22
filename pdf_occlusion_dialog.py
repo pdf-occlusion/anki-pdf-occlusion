@@ -1405,9 +1405,15 @@ class PDFOcclusionDialog(QDialog):
     # ---------------------------------------------------------------- PDF --
 
     def _open_pdf(self):
+        # start where the last PDF was picked from, if that folder still exists
+        start = _cfg("last_open_dir", "")
+        if not (start and os.path.isdir(start)):
+            start = ""
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
+            self, "Open PDF", start, "PDF Files (*.pdf)"
         )
+        if paths:
+            _set_cfg("last_open_dir", os.path.dirname(paths[0]))
         self._open_paths(paths)
 
     def _fill_recent_menu(self):
