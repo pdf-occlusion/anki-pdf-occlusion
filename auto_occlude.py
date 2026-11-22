@@ -698,9 +698,10 @@ CARD_STYLES = [
 # Quiz styles, named for the kind of question rather than one exam; the
 # caption says which exams each one is for. Values are the server's.
 QUIZ_STYLES = [
-    ("step1", "Basic Science", "Patient cases that ask why: the mechanism. For Step 1 and block exams."),
-    ("shelf", "Clinical", "Patient cases that ask what next: diagnosis and treatment. For Step 2 CK and shelf exams."),
-    ("recall", "Quick Recall", "Short questions on one fact each, for quick review."),
+    ("step1", "Basic Science", "Cases that ask why something happens. Suits Step 1, COMLEX, the MCAT, dental, pharmacy and nursing science, and course exams."),
+    ("shelf", "Clinical", "Cases that ask what to do next. Suits Step 2 CK, shelf exams, NCLEX, PANCE and other clinical exams."),
+    ("recall", "Quick Recall", "Short questions on one fact each, for any course or exam."),
+    ("custom", "Custom", "Your own style. Describe it in Instructions below."),
 ]
 QUIZ_COUNT = (5, 40)       # the server's limits
 
@@ -1011,6 +1012,7 @@ class AutoOccludeDialog(QDialog):
         self.custom.setObjectName("instructions")
         self.custom.setPlainText(s["custom"])
         self.custom.setFixedHeight(58)
+        self.custom.textChanged.connect(self._refresh)
         self.custom.setFixedWidth(474)
         self._add_row("custom", "Instructions", self.custom, top=True)
         root.addLayout(self.grid)
@@ -1357,7 +1359,10 @@ class AutoOccludeDialog(QDialog):
         self.start_btn.setIcon(_go_icon(20))
         self.start_btn.setAccessibleName(names[make])
         self.start_btn.setToolTip(names[make])
-        self.start_btn.setEnabled(signed and n > 0 and not short)
+        custom_missing = (make == "quiz" and self._picked(self.quiz_btns, "step1") == "custom"
+                          and not self.custom.toPlainText().strip())
+        self.custom.setPlaceholderText("Required for the Custom style" if custom_missing else "")
+        self.start_btn.setEnabled(signed and n > 0 and not short and not custom_missing)
 
     def _captions(self, make: str, scope: str):
         """A few words beside each choice saying what the chosen option does."""
