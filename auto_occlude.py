@@ -108,6 +108,30 @@ def save_settings(s: dict) -> None:
     mw.addonManager.writeConfig(pkg, cfg)
 
 
+# Seconds each step of a run usually takes, so the progress bar can move steadily
+# while the server works. Starting guesses come from test runs; each finished run
+# nudges them toward what this computer actually saw.
+TIMING_DEFAULTS = {"prep_slide": 0.15, "start": 15.0, "batch_base": 6.0,
+                   "box_slide": 4.0, "card_slide": 9.0, "quiz_question": 4.0}
+
+
+def timing() -> dict:
+    t = dict(TIMING_DEFAULTS)
+    saved = _cfg().get("auto_timing") or {}
+    t.update({k: float(v) for k, v in saved.items() if k in t and isinstance(v, (int, float)) and v > 0})
+    return t
+
+
+def learn_timing(key: str, seconds: float) -> None:
+    """Move one remembered step time a third of the way toward what was just measured."""
+    pkg = __name__.split(".")[0]
+    cfg = mw.addonManager.getConfig(pkg) or {}
+    t = timing()
+    t[key] = round(min(max(t[key] + (seconds - t[key]) / 3, 0.5), 600), 2)
+    cfg["auto_timing"] = t
+    mw.addonManager.writeConfig(pkg, cfg)
+
+
 def server() -> str:
     return (_cfg().get("auto_occlude_server") or DEFAULT_SERVER).rstrip("/")
 
@@ -1446,14 +1470,73 @@ class Run:
         self.made = self.dropped = self.done_slides = 0
         self.prepared = []
 
+    # ---- one continuous bar
+    # The run is planned as a timeline of steps (getting slides ready, the server's
+    # first look at the lecture, each batch) weighted by how long each usually takes.
+    # While a step waits on the server the bar keeps creeping toward that step's end,
+    # slowing as it gets close, and jumps there when the answer arrives.
+
+    def _headline(self) -> str:
+        n = len(self.pages)
+        slides = "this slide" if n == 1 else f"{n} slides"
+        if self.quiz:
+            return f"Writing {int(self.s.get('quiz_count') or 20)} questions"
+        if self.atomic:
+            return f"Writing cards for {slides}"
+        if self.s.get("_followup"):
+            return "Placing boxes on the figure slides"
+        return f"Placing boxes on {slides}"
+
+    def _plan(self):
+        t, n = timing(), len(self.pages)
+        self._t = t
+        prep = t["prep_slide"] * n
+        if self.quiz:
+            work = t["quiz_question"] * int(self.s.get("quiz_count") or 20)
+        else:
+            per = t["card_slide"] if self.atomic else t["box_slide"]
+            size = 6
+            work = sum(t["batch_base"] + per * min(size, n - i) for i in range(0, n, size))
+        total = prep + t["start"] + work
+        self._span = 1000 / total if total > 0 else 0
+        self._prep_end = prep * self._span
+        self._at = 0.0             # where the bar is
+        self._step = None          # (from, to, started, expected seconds) while waiting
+
+    def _wait(self, seconds: float):
+        """Start a server step expected to take about `seconds`."""
+        self._step = (self._at, min(self._at + seconds * self._span, 1000), time.time(), max(seconds, 1.0))
+
+    def _arrived(self) -> float:
+        """The current server step is done: jump to its end; return how long it took."""
+        if not self._step:
+            return 0.0
+        a, b, started, _ = self._step
+        self._step = None
+        self._at = b
+        self.progress.setValue(int(b))
+        return time.time() - started
+
+    def _tick(self):
+        if not self._step:
+            return
+        import math
+        a, b, started, expected = self._step
+        # about 80% of the way at the expected time, then ever slower; never reaches the end
+        x = (time.time() - started) / expected
+        self.progress.setValue(int(a + (b - a) * (1 - math.exp(-1.6 * x)) * 0.97))
+
     def start(self):
-        total = len(self.pages)
-        self.progress = QProgressDialog("Reading the slides", "Cancel", 0, total * 2, self.dlg)
+        self._plan()
+        self.progress = QProgressDialog(self._headline(), "Cancel", 0, 1000, self.dlg)
         self.progress.setWindowTitle("Generate")
         self.progress.setWindowModality(Qt.WindowModality.WindowModal)
         self.progress.setMinimumDuration(0)
         self.progress.canceled.connect(self._cancel)
         self.progress.setValue(0)
+        self._ticker = QTimer(self.progress)
+        self._ticker.timeout.connect(self._tick)
+        self._ticker.start(100)
         # same guard as the Auto window: a modal progress window hidden behind the PDF
         # Occlusion window would block every click while a run is going
         def keep_in_front(state, p=self.progress):
@@ -1505,7 +1588,8 @@ class Run:
             payload = (atomic_payload(local + 1, image, lines) if (self.atomic or self.quiz)
                        else vision.slide_payload(local + 1, image, units))
             self.prepared.append((gidx, local, image, lines, payload, units))
-            self.progress.setValue(len(self.prepared))
+            self._at = self._prep_end * len(self.prepared) / n
+            self.progress.setValue(int(self._at))
         if len(self.prepared) < n:
             # keep rendering at full speed; only wait (briefly) when everything left is recognition
             QTimer.singleShot(0 if self._rendered < n else 30, self._prepare)
@@ -1515,8 +1599,8 @@ class Run:
         self._start_job()
 
     def _start_job(self):
-        self.progress.setLabelText("Reading the whole document")
-        doc = self.dlg._doc_for_page(self.pages[0][0])
+        self._wait(self._t["start"])
+        doc =self.dlg._doc_for_page(self.pages[0][0])
         lecture = doc.get("lecture", "")
         whole = document_payload(self.dlg, doc, self.prepared, self.notes if self.s.get("use_notes") else "")
         body = {"slides": len(self.prepared), "lecture": lecture, "doc": whole,
@@ -1532,6 +1616,9 @@ class Run:
         self.cancelled = True
 
     def _job_started(self, res, err):
+        took = self._arrived()
+        if not err:
+            learn_timing("start", took)
         if err:
             telemetry.track("auto_occlude_error", stage="start", status=getattr(err, "status", 0),
                             message=str(err)[:200])
@@ -1550,9 +1637,6 @@ class Run:
         self.job, self.batch = res["job"], int(res.get("batch_size") or 6)
         if self.quiz:
             return self._make_quiz()
-        what = (res.get("document") or {}).get("subject")
-        if what:
-            self.progress.setLabelText(f"Occluding: {what}")
         self.queue = [self.prepared[i:i + self.batch] for i in range(0, len(self.prepared), self.batch)]
         self._next()
 
@@ -1565,10 +1649,15 @@ class Run:
         if self.s.get("use_notes") and self.notes:
             body["notes"] = self.notes
 
+        per_key = "card_slide" if self.atomic else "box_slide"
+        if attempt == 0:
+            self._wait(self._t["batch_base"] + self._t[per_key] * len(chunk))
+
         def done(res, err):
             if err:
                 retry = isinstance(err, ServerError) and err.status in (0, 502, 503) and attempt < 2
                 if retry and not self.cancelled:
+                    # the bar keeps creeping during the retry
                     QTimer.singleShot(3000 * (attempt + 1), lambda: self._next(attempt + 1))
                     return
                 telemetry.track("auto_occlude_error", stage="batch", status=getattr(err, "status", 0),
@@ -1577,6 +1666,9 @@ class Run:
                 showWarning(f"Auto-occlude stopped: {err}\n\nBoxes made so far are kept.",
                             parent=self.dlg, title="PDF Occlusion")
                 return self.on_finish(self.made, self.dropped, self.done_slides, False)
+            took = self._arrived()
+            if attempt == 0:
+                learn_timing(per_key, (took - self._t["batch_base"]) / len(chunk))
             self.queue.pop(0)
             pages = res.get("pages") or {}
             if self.atomic:
@@ -1591,20 +1683,23 @@ class Run:
                     plan = pages.get(str(local + 1)) or pages.get(f"p{local + 1}") or {}
                     self.on_page_boxes(gidx, units, image, payload["_scale"], plan, self)
             self.done_slides += len(chunk)
-            self.progress.setValue(len(self.pages) + self.done_slides)
             self._next()
         route = "atomic" if self.atomic else "batch"
         in_background(lambda: call(f"/v1/jobs/{self.job}/{route}", body, self.token, 300), done)
 
     def _make_quiz(self):
         """A quiz is written from the whole lecture in one request, then opened in the browser."""
-        self.progress.setLabelText("Writing the questions")
-        body = {"slides": [{k: v for k, v in c[4].items() if not k.startswith("_")} for c in self.prepared[:100]],
+        count = int(self.s.get("quiz_count") or 20)
+        self._wait(self._t["quiz_question"] * count)
+        body ={"slides": [{k: v for k, v in c[4].items() if not k.startswith("_")} for c in self.prepared[:100]],
                 "settings": {"style": self.s.get("quiz_style") or "step1",
                              "count": int(self.s.get("quiz_count") or 20),
                              "custom": self.s.get("custom") or ""}}
 
         def done(res, err):
+            took = self._arrived()
+            if not err:
+                learn_timing("quiz_question", took / count)
             if err:
                 telemetry.track("auto_occlude_error", stage="quiz", status=getattr(err, "status", 0),
                                 message=str(err)[:200])
@@ -1623,5 +1718,8 @@ class Run:
         except (AttributeError, TypeError, RuntimeError):
             pass
         complete = not self.cancelled    # closing the progress window emits canceled
+        self._step = None
+        if getattr(self, "_ticker", None):
+            self._ticker.stop()
         self.progress.close()
         self.on_finish(self.made, self.dropped, self.done_slides, complete)

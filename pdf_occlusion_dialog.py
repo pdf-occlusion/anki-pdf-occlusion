@@ -2326,7 +2326,7 @@ class PDFOcclusionDialog(QDialog):
             doc = self._doc_for_page(run.occlude[0])
             pages = [(i, doc["path"], i - doc["start"], (lambda i=i: self._page_image(i)))
                      for i in run.occlude if self._doc_for_page(i) is doc]
-            s = dict(run.s, make="occlusion")
+            s = dict(run.s, make="occlusion", _followup=True)
             self._auto_replace = False
             self._auto_btn.setEnabled(False)
             self._auto_run = auto_occlude.Run(self, pages, s, run.notes, self._auto_page_boxes,
