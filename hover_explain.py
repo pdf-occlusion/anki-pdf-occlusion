@@ -649,7 +649,32 @@ def _carousel(direction: int):
     return paint
 
 
+def _mode(hide_all: bool):
+    """The tested label moves down the slide; the others are covered too
+    (hide all) or left showing (hide one)."""
+    def paint(p, art, t, k):
+        s = _slide_rect(art)
+        _slide(p, s, k)
+        _content(p, s, k)
+        step = min(2, int(t * 3))
+        local = t * 3 - step
+        for i, b in enumerate(_BOXES):
+            r = _u(s, *b)
+            if i == step:
+                sc, a = _pop(_ph(local, 0.0, .25))
+                _box(p, _scaled(r, sc), k, a, sel=1.0)
+            elif hide_all:
+                _box(p, r, k, 1.0)
+        # a small card edge flips in each step, so it reads as one card each
+        flip = _ph(local, .0, .18) * (1 - _ph(local, .82, 1.0))
+        if flip > 0:
+            _rrect(p, s.adjusted(-1, -1, 1, 1), 4, None, _a(k.accent, .35 * flip), 1.2)
+    return paint
+
+
 PAINTERS = {
+    "mode_ao": _mode(True),
+    "mode_oa": _mode(False),
     "open": _paint_open,
     "lecture": _paint_lecture,
     "slides": _paint_slides,
@@ -667,6 +692,8 @@ PAINTERS = {
 
 # name, shortcut (portable text, shown in the platform's own notation)
 LABELS = {
+    "mode_ao": ("Hide all", ""),
+    "mode_oa": ("Hide one", ""),
     "open": ("Open PDF", "Ctrl+O"),
     "lecture": ("Lecture", ""),
     "slides": ("Slides", ""),
@@ -686,7 +713,7 @@ LABELS = {
 # shown as a second, smaller line.
 _LIVE_TIP = {"create"}
 
-_PERIOD = {"text": 3.8, "auto": 3.0, "create": 3.0, "zoom": 2.8, "slides": 3.0,
+_PERIOD = {"mode_ao": 3.6, "mode_oa": 3.6, "text": 3.8, "auto": 3.0, "create": 3.0, "zoom": 2.8, "slides": 3.0,
            "prev": 3.0, "next": 3.0}
 
 

@@ -12,7 +12,7 @@ from aqt.qt import (
     QStackedWidget, QPushButton, QToolButton, QLabel, QLineEdit, QComboBox,
     QFileDialog, QScrollArea, QListWidget, QListWidgetItem,
     QStyledItemDelegate, QStyle, QAbstractItemView, QShortcut, QKeySequence,
-    Qt, QRect, QRectF, QPoint, QSize, QImage, QPixmap, QIcon, QColor, QPen,
+    Qt, QRect, QRectF, QPoint, QPointF, QSize, QImage, QPixmap, QIcon, QColor, QPen,
     QFont, QFontMetrics, QPainter, QByteArray, QObject, QEvent,
     QProgressDialog, QMenu, QDesktopServices, QUrl, QTimer, QSlider,
     QWidgetAction,
@@ -200,6 +200,37 @@ _ICONS = {
     "cards": '<rect x="7.5" y="4.5" width="12" height="9" rx="1.6"/>'
              '<path d="M4.5 9v7.9c0 .9.7 1.6 1.6 1.6H15"/>',
 }
+
+
+def _mode_icon(mode: str, c: dict) -> QIcon:
+    """Three labels on a slide. Hide all: every one covered, the tested one
+    outlined. Hide one: only the tested one covered."""
+    dpr = max(2.0, (mw.app.devicePixelRatio() if mw else 1.0) or 1.0)
+    icon = QIcon()
+    for state, ink in ((QIcon.Mode.Normal, c["icon"]), (QIcon.Mode.Disabled, c["icon_off"])):
+        pm = QPixmap(int(22 * dpr), int(22 * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        col = QColor(ink)
+        accent = QColor(c["accent"]) if state == QIcon.Mode.Normal else col
+        for i, y in enumerate((3.5, 9, 14.5)):
+            tested = i == 1
+            if mode == "ao" or tested:
+                # a covered label: a solid mask, the tested one ringed in accent
+                fill = QColor(col)
+                fill.setAlpha(170)
+                p.setPen(QPen(accent, 1.6) if tested else Qt.PenStyle.NoPen)
+                p.setBrush(fill)
+                p.drawRoundedRect(QRectF(3, y, 16, 5), 1.5, 1.5)
+            else:
+                # a label left showing: a line of text
+                p.setPen(QPen(col, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                p.drawLine(QPointF(4, y + 2.5), QPointF(16, y + 2.5))
+        p.end()
+        icon.addPixmap(pm, state)
+    return icon
 
 
 class _CountButton(QPushButton):
@@ -686,6 +717,7 @@ class PDFOcclusionDialog(QDialog):
             ("_select_btn", "select"), ("_text_btn", "text"),
             ("_detect_btn", "detect"), ("_cloze_btn", "cloze"),
             ("_zoom_label", "zoom"), ("_auto_btn", "auto"),
+            ("_mode_ao_btn", "mode_ao"), ("_mode_oa_btn", "mode_oa"),
             ("_create_btn", "create"),
         ), _colors)
 
@@ -994,15 +1026,10 @@ class PDFOcclusionDialog(QDialog):
         self._notes_pdf_menu.aboutToShow.connect(self._fill_notes_pdf_menu)
         self._notes_pdf_btn.setMenu(self._notes_pdf_menu)
 
-        self._page_mode_combo = QComboBox()
-        self._page_mode_combo.addItem("Hide All, Show One", "ao")
-        self._page_mode_combo.addItem("Hide One, Show One", "oa")
-        self._page_mode_combo.currentIndexChanged.connect(self._on_page_mode_changed)
 
         self._popover.add_row("Lecture", self._lecture_edit)
         self._popover.add_row("Deck", self._deck_combo)
         self._popover.add_row("Notes PDF", self._notes_pdf_btn)
-        self._popover.add_row("This slide", self._page_mode_combo)
 
         # ── Rail + stage ──────────────────────────────────────────────────
         body = QHBoxLayout()
@@ -1021,6 +1048,29 @@ class PDFOcclusionDialog(QDialog):
         stage_box.setContentsMargins(0, 0, 0, 0)
         self._stack = QStackedWidget()
         stage_box.addWidget(self._stack)
+
+        # this slide's mode, on the slide: hide all and show one, or hide one
+        self._mode_seg = QFrame(self._stage)
+        self._mode_seg.setObjectName("seg")
+        mrow = QHBoxLayout(self._mode_seg)
+        mrow.setContentsMargins(3, 3, 3, 3)
+        mrow.setSpacing(2)
+        self._mode_btns = {}
+        for mode, label in (("ao", "Hide all"), ("oa", "Hide one")):
+            b = QToolButton()
+            b.setObjectName("segBtn")
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            b.setFixedSize(36, 28)
+            b.setIconSize(QSize(22, 22))
+            b.setAccessibleName(label)
+            b.clicked.connect(lambda _=False, m=mode: self._set_page_mode(m))
+            mrow.addWidget(b)
+            self._mode_btns[mode] = b
+        self._mode_ao_btn, self._mode_oa_btn = self._mode_btns["ao"], self._mode_btns["oa"]
+        self._mode_seg.adjustSize()
+        self._mode_seg.hide()
+        self._stage.installEventFilter(self)
 
         # nothing open yet: one button in the middle
         empty = QWidget()
@@ -1159,6 +1209,8 @@ class PDFOcclusionDialog(QDialog):
         self._update_controls()
 
     def eventFilter(self, obj, ev):
+        if obj is self._stage and ev.type() == QEvent.Type.Resize:
+            self._place_mode_seg()
         if obj is self._cloze_column and ev.type() in (
                 QEvent.Type.ShowToParent, QEvent.Type.HideToParent):
             self._column_wrap.setVisible(ev.type() == QEvent.Type.ShowToParent)
@@ -1173,6 +1225,8 @@ class PDFOcclusionDialog(QDialog):
         self._create_btn.setIcon(_icon("cards", c, 20, color="#ffffff"))
         for b in (self._rail_btn, self._prev_btn, self._next_btn):
             b.setIcon(_icon(b.property("_icon"), c))
+        for mode, b in self._mode_btns.items():
+            b.setIcon(_mode_icon(mode, c))
         self._empty_open_btn.setStyleSheet(_primary_qss(c))
         for b in (self._draw_btn, self._select_btn, self._text_btn,
                   self._detect_btn, self._cloze_btn):
@@ -1277,7 +1331,7 @@ class PDFOcclusionDialog(QDialog):
         self._notes_pdf_menu.clear()
         path = self._notes_pdf()
         self._notes_pdf_menu.addAction(
-            "Choose…" if not path else "Replace…", self._choose_notes_pdf)
+            "Choose" if not path else "Replace", self._choose_notes_pdf)
         act = self._notes_pdf_menu.addAction(
             "Open", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
         act.setEnabled(bool(path) and os.path.exists(path))
@@ -1289,7 +1343,7 @@ class PDFOcclusionDialog(QDialog):
         self._notes_pdf_btn.setEnabled(bool(self._docs))
         path = self._notes_pdf()
         if not path:
-            self._notes_pdf_btn.setText("Choose…")
+            self._notes_pdf_btn.setText("Choose")
             self._notes_pdf_btn.setToolTip("")
             return
         name = os.path.basename(path)
@@ -1735,15 +1789,21 @@ class PDFOcclusionDialog(QDialog):
     def _sync_page_mode_combo(self):
         """Show the slide's effective mode: its override, else the config default."""
         mode = self._page_modes.get(self._page_index) or self._default_mode()
-        idx = self._page_mode_combo.findData(mode)
-        self._page_mode_combo.blockSignals(True)
-        self._page_mode_combo.setCurrentIndex(max(idx, 0))
-        self._page_mode_combo.blockSignals(False)
+        self._mode_btns[mode].setChecked(True)
+        self._mode_seg.setVisible(bool(self._pages))
+        self._place_mode_seg()
 
-    def _on_page_mode_changed(self):
+    def _place_mode_seg(self):
+        """Bottom centre of the stage, over the slide's margin."""
+        seg = self._mode_seg
+        seg.adjustSize()
+        seg.move((self._stage.width() - seg.width()) // 2,
+                 self._stage.height() - seg.height() - 14)
+        seg.raise_()
+
+    def _set_page_mode(self, mode: str):
         if not self._pages:
             return
-        mode = self._page_mode_combo.currentData()
         # picking the default again = no override
         if mode == self._default_mode():
             self._page_modes.pop(self._page_index, None)
@@ -2002,7 +2062,7 @@ class PDFOcclusionDialog(QDialog):
         has = bool(self._pages)
         for w in (self._draw_btn, self._select_btn, self._text_btn,
                   self._detect_btn, self._cloze_btn, self._zoom_label,
-                  self._page_mode_combo):
+                  self._mode_seg):
             w.setEnabled(has)
         self._zoom_label.setVisible(has)
         self._auto_btn.setEnabled(has and not getattr(self, "_auto_run", None))
