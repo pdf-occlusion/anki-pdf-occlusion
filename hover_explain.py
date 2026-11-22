@@ -486,6 +486,14 @@ def _paint_auto(p, art, t, k):
             p.setBrush(_a(k.accent, al * pick) if on else Qt.BrushStyle.NoBrush)
             p.drawEllipse(QPointF(c.x() + 9, y + 1.5), 2.2, 2.2)
             _bar(p, QRectF(c.x() + 15, y, c.width() - 26 - (n % 2) * 8, 3), _a(k.bar, al))
+    # the result's name under it: Boxes, Cards, Quiz
+    f = QFont(p.font())
+    f.setPixelSize(9)
+    f.setBold(True)
+    p.setFont(f)
+    p.setPen(_a(k.sub, al))
+    p.drawText(QRectF(out.x() - 4, art.bottom() - 15, out.width(), 12),
+               int(Qt.AlignmentFlag.AlignCenter), ("Boxes", "Cards", "Quiz")[phase])
     p.restore()
 
 

@@ -687,7 +687,7 @@ class SignIn:
 
 # ------------------------------------------------------------------ the window
 
-MAKES = [("occlusion", "Image occlusion"), ("atomic", "Cloze cards"), ("quiz", "Practice quiz")]
+MAKES = [("occlusion", "Boxes"), ("atomic", "Cards"), ("quiz", "Quiz")]
 # Cloze card styles: how deep the cards go. The text is added to the
 # student's own instructions when the cards are written.
 CARD_STYLES = [
@@ -766,6 +766,14 @@ def _preview(kind: str, size: int = 56):
         lines(8, 34, [s - 34], col=accent, w=2.0)
     p.end()
     return QIcon(pm)
+
+
+def _credits_left(b: dict):
+    """The one balance; a server from before credits says pages_left."""
+    if not b:
+        return None
+    v = b.get("credits_left", b.get("pages_left"))
+    return int(v) if v is not None else None
 
 
 def _initial_icon(email: str, c: dict, size: int = 26):
@@ -946,7 +954,7 @@ class AutoOccludeDialog(QDialog):
 
         self._show_more(bool(s.get("show_more")))
         self.balance = None
-        self.free_pages = 50
+        self.free_pages = 60
         self._set_make(s.get("make") if s.get("make") in dict(MAKES) else "occlusion",
                        scope=s.get("scope"))
         self._refresh()
@@ -1133,8 +1141,8 @@ class AutoOccludeDialog(QDialog):
         in_background(lambda: call("/v1/me", token=a["token"], timeout=20), self._got_balance)
 
     def _got_health(self, res, err):
-        if not err and isinstance(res, dict) and res.get("free_pages"):
-            self.free_pages = int(res["free_pages"])
+        if not err and isinstance(res, dict) and (res.get("free_credits") or res.get("free_pages")):
+            self.free_pages = int(res.get("free_credits") or res["free_pages"])
             self._refresh()
 
     def _got_balance(self, me, err):
@@ -1155,10 +1163,9 @@ class AutoOccludeDialog(QDialog):
         parts = []
         if b.get("plan") in ("monthly", "yearly"):
             parts.append(f"{b['plan'].capitalize()} plan")
-        if b.get("pages_left") is not None:
-            parts.append(f"{b['pages_left']:,} pages")
-        if b.get("quizzes_left") is not None:
-            parts.append(f"{b['quizzes_left']} quiz{'zes' if b['quizzes_left'] != 1 else ''}")
+        left = _credits_left(b)
+        if left is not None:
+            parts.append(f"{left:,} credits")
         if parts:
             m.addAction(", ".join(parts)).setEnabled(False)
         m.addSeparator()
@@ -1194,20 +1201,19 @@ class AutoOccludeDialog(QDialog):
         n = self.slide_counts.get(scope, 0)
         q = self.quiz_count.value()
         self.count_label.setText(f"{q} questions")
-        if make == "quiz":
-            need, left, unit = 1, (b.get("quizzes_left") if signed else None), "quiz"
-        else:
-            need, left, unit = n, (b.get("pages_left") if signed else None), "page"
-        plural = lambda k, u: f"{k:,} {u}{'zes' if u == 'quiz' and k != 1 else ('s' if k != 1 and u != 'quiz' else '')}"
+        costs = b.get("credit_costs") or {}
+        # one balance: a credit per slide for boxes or cards, two per quiz question
+        need = q * int(costs.get("question", 2)) if make == "quiz" else n * int(costs.get("slide", 1))
+        left = _credits_left(b) if signed else None
         short = signed and left is not None and need > left
         if not signed:
-            text = f"{self.free_pages} pages free"
+            text = f"{self.free_pages} credits free"
         elif left is None:
-            text = f"Uses {plural(need, unit)}"
+            text = f"Uses {need:,} credit{'s' if need != 1 else ''}"
         elif short:
-            text = f"Needs {plural(need, unit)}, {left:,} left"
+            text = f"Needs {need:,} credits, {left:,} left"
         else:
-            text = f"Uses {need:,} of {plural(left, unit)}"
+            text = f"Uses {need:,} of {left:,} credits"
         if make == "occlusion" and scope == "all" and self.slide_counts.get("empty", n) < n:
             text += ", replaces your boxes"
         self.usage.setText(text)
