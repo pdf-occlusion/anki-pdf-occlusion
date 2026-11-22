@@ -979,6 +979,23 @@ class _Hover(QObject):
             self._card = _Card(win)
         extra = (w.toolTip() or "") if key in _LIVE_TIP else ""
         self._card.present(w, key, colors_fn, extra)
+        _note_seen(key)
+
+
+_SEEN: set = set()
+
+
+def _note_seen(key: str) -> None:
+    """Which controls people hover long enough to see explained: once per key
+    per Anki session, so it shows what needs explaining without flooding."""
+    if key in _SEEN:
+        return
+    _SEEN.add(key)
+    try:
+        from . import telemetry
+        telemetry.track("hover_card", key=key)
+    except Exception:   # noqa: BLE001 - never let counting break the window
+        pass
 
 
 def _alive(obj) -> bool:

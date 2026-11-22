@@ -1043,6 +1043,16 @@ class OcclusionCanvas(QWidget):
 
     def _format_annot(self, step: int = 0, bold=None, color=None, bg=None):
         """Apply a format-bar change to the selected text box."""
+        kind = "size" if step else "bold" if bold else "color" if color else "background"
+        seen = getattr(OcclusionCanvas, "_format_seen", set())
+        if kind not in seen:            # once per kind per Anki session
+            seen.add(kind)
+            OcclusionCanvas._format_seen = seen
+            try:
+                from . import telemetry
+                telemetry.track("text_format", kind=kind)
+            except Exception:   # noqa: BLE001
+                pass
         a = self._annot_by_id(self._annot_sel) if self._annot_sel else None
         if a is None:
             return
