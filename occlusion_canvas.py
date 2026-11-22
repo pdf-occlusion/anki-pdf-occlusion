@@ -1838,6 +1838,17 @@ class OcclusionCanvas(QWidget):
             self.update()
             return
 
+        # a text box (drawn on top of the boxes) can be dragged in Select too;
+        # editing its words stays with the Text tool
+        if self._tool == "select" and not shift:
+            hit = self._annot_at(spos)
+            if hit is not None:
+                self._selected = set()
+                self._annot_press = [hit, ipos, False]
+                self._pre_annots = [dict(x) for x in self._annots]
+                self.update()
+                return
+
         # click inside a box?
         for box in reversed(self._boxes):
             if box.contains_screen(spos.x(), spos.y(), self._disp):
@@ -1994,6 +2005,12 @@ class OcclusionCanvas(QWidget):
             self._update_cursor()
             return
 
+        if self._tool == "select" and self._annot_at(spos) is not None \
+                and self._handle_at(spos)[0] is None and self._edge_at(spos)[0] is None \
+                and self._rotate_at(spos)[0] is None:
+            self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+            return
+
         # cursor hints — edge resize and rotation are hover-only, so the
         # cursor is the only thing that announces them
         box, corner = self._handle_at(spos)
@@ -2072,7 +2089,7 @@ class OcclusionCanvas(QWidget):
             self._annot_move = None
             if moved:
                 self._commit_annots()
-            else:
+            elif self._tool == "text":
                 self._begin_edit("annot", a["id"])
             return
 
