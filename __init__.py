@@ -291,6 +291,9 @@ def _add_editor_button(buttons: list, editor: Editor) -> None:
         tip="PDF Occlusion (Ctrl+Shift+P)",
         keys="ctrl+shift+p",
     )
+    # Anki inverts editor icons in night mode, which would turn the purple
+    # icon green; an inline !important filter outranks that rule for this one
+    btn = btn.replace('<img class="topbut"', '<img class="topbut" style="filter:none !important"', 1)
     buttons.append(btn)
 
 
