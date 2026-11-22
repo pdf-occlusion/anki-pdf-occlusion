@@ -20,20 +20,6 @@ Add-on code `783821131`, then restart Anki.
 3. Drag boxes over what you want to memorize, or press `F` and drag over a region to have them placed for you. The slides are down the left; a dot marks the ones you have worked on.
 4. Click the lecture title to set the deck, then the purple Create Cards button at the top right.
 
-## Generate
-
-`Generate` in the top bar makes one of three things from the PDF for you:
-
-- **Boxes**: occlusion boxes placed by looking at each slide, the way you would draw them.
-- **Cards**: text cloze cards, one fact each; slides that teach by location get boxes instead.
-- **Quiz**: board-style questions with a reason for every answer, to take on any device.
-
-Everything stays editable until you create the cards. Your first 60 credits are free (1 per slide for boxes or cards, 2 per quiz question); more at [pdf-occlusion.github.io](https://pdf-occlusion.github.io).
-
-## Whole-slide review
-
-On a deck with PDF Occlusion cards due, the deck screen offers **One Card** (the usual review) or **Whole Slide**: every box on a slide starts covered, you uncover them one by one and grade each Again, Hard, Good or Easy. Each box is still its own card and is scheduled as usual.
-
 ## Shortcuts
 
 | Key | Action |
