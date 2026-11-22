@@ -1497,7 +1497,9 @@ class Run:
             per = t["card_slide"] if self.atomic else t["box_slide"]
             size = 6
             work = sum(t["batch_base"] + per * min(size, n - i) for i in range(0, n, size))
-        total = prep + t["start"] + work
+        # the server skips its read of the whole lecture for a run of 3 slides or fewer
+        self._start_s = 1.5 if n <= 3 else t["start"]
+        total = prep + self._start_s + work
         self._span = 1000 / total if total > 0 else 0
         self._prep_end = prep * self._span
         self._at = 0.0             # where the bar is
@@ -1599,7 +1601,7 @@ class Run:
         self._start_job()
 
     def _start_job(self):
-        self._wait(self._t["start"])
+        self._wait(self._start_s)
         doc =self.dlg._doc_for_page(self.pages[0][0])
         lecture = doc.get("lecture", "")
         whole = document_payload(self.dlg, doc, self.prepared, self.notes if self.s.get("use_notes") else "")
@@ -1617,7 +1619,7 @@ class Run:
 
     def _job_started(self, res, err):
         took = self._arrived()
-        if not err:
+        if not err and len(self.pages) > 3:
             learn_timing("start", took)
         if err:
             telemetry.track("auto_occlude_error", stage="start", status=getattr(err, "status", 0),
