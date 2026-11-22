@@ -508,10 +508,17 @@ except AttributeError:
 
 _SWITCH_CSS = """
 <style>
-#pdfocc-mode{display:flex;justify-content:center;gap:14px;margin:18px auto 4px}
-#pdfocc-mode button{all:unset;cursor:pointer;width:148px;padding:10px 0 8px;border-radius:12px;
-  border:1px solid var(--border, #d2d2d7);text-align:center;font-size:13px;color:var(--fg, inherit)}
-#pdfocc-mode button.on{border:2px solid #6e5aa8;padding:9px 0 7px}
+#pdfocc-mode{display:flex;gap:2px;width:max-content;margin:18px auto 4px;padding:3px;
+  border-radius:10px;background:#e8e8ed}
+#pdfocc-mode button{all:unset;cursor:pointer;width:132px;padding:9px 0 7px;border-radius:8px;
+  border:1px solid transparent;text-align:center;font-size:13px;color:var(--fg, inherit);
+  transition:background-color .15s ease,border-color .15s ease}
+#pdfocc-mode button:hover{background:rgba(0,0,0,.05)}
+#pdfocc-mode button.on{background:#fff;border-color:#d6d6dc}
+.nightMode #pdfocc-mode{background:#3a3a3d}
+.nightMode #pdfocc-mode button:hover{background:rgba(255,255,255,.07)}
+.nightMode #pdfocc-mode button.on{background:#636366;border-color:#6e6e73}
+.nightMode #pdfocc-mode .m{fill:#a1a1a6}
 #pdfocc-mode svg{display:block;margin:0 auto 6px;width:72px;height:44px}
 #pdfocc-mode .s{fill:none;stroke:currentColor;stroke-width:1.4;opacity:.75}
 #pdfocc-mode .m{fill:#7c7c80}
