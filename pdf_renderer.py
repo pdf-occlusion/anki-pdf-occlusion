@@ -34,9 +34,49 @@ def ensure_vendor_on_path() -> None:
     but this module is imported fresh the next time the dialog opens.
     """
     root = os.path.join(os.path.dirname(__file__), "vendor")
-    for p in (os.path.join(root, _platform_tag()), root):
+    for p in (_outside_copy(os.path.join(root, _platform_tag())), root):
         if os.path.isdir(p) and p not in sys.path:
             sys.path.insert(0, p)
+
+
+def _outside_copy(src: str) -> str:
+    """On Windows, the vendored library as copied outside the add-on folder.
+
+    Windows locks a DLL while it is loaded, so pdfium.dll inside the add-on
+    folder would stop Anki from updating or deleting the add-on for the rest
+    of the session once PDF Occlusion had been opened. Each build gets its own
+    folder (an update can't overwrite the copy the running session holds), and
+    copies from older builds are removed when they are no longer locked.
+    Anywhere else, or if copying fails, the folder inside the add-on is used.
+    """
+    if not sys.platform.startswith("win") or not os.path.isdir(src):
+        return src
+    import hashlib
+    import shutil
+    try:
+        dll = os.path.join(src, "pypdfium2_raw", "pdfium.dll")
+        ver = os.path.join(src, "pypdfium2", "version.json")
+        h = hashlib.sha1(str(os.path.getsize(dll)).encode())
+        with open(ver, "rb") as f:
+            h.update(f.read())
+        base = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+                            "PDF Occlusion", "runtime")
+        key = h.hexdigest()[:12]
+        dst = os.path.join(base, key, os.path.basename(src))
+        done = os.path.join(base, key, "complete")
+        if not os.path.exists(done):
+            tmp = os.path.join(base, f"{key}.tmp{os.getpid()}")
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.copytree(src, os.path.join(tmp, os.path.basename(src)))
+            open(os.path.join(tmp, "complete"), "w").close()
+            shutil.rmtree(os.path.join(base, key), ignore_errors=True)
+            os.replace(tmp, os.path.join(base, key))
+        for old in os.listdir(base):
+            if old != key:
+                shutil.rmtree(os.path.join(base, old), ignore_errors=True)
+        return dst
+    except Exception:       # noqa: BLE001 - fall back to loading from the add-on folder
+        return src
 
 
 def _import_pdfium():

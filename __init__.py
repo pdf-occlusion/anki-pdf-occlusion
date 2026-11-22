@@ -210,6 +210,11 @@ def _after_hello(reply) -> None:
     marker = f"update_tried_{latest}"
     if _seen_version(marker):
         return
+    import sys
+    if sys.platform.startswith("win") and "pypdfium2_raw" in sys.modules:
+        # pdfium is loaded, and if it was loaded from inside the add-on folder
+        # Windows won't let the updater replace it: try again next start
+        return
     _record_version(marker, 1)
     telemetry.track("update_started", to=latest)
 
