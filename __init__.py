@@ -56,7 +56,7 @@ mw.form.menuTools.addAction(action)
 # v5: explicit object-fit on the mask overlay (AnkiMobile alignment)
 # v4: Notes / Slides buttons + the two PDF-path fields behind them
 # v3: Remarks field renamed to Notes; v2: flicker-free reveal
-TEMPLATE_VERSION = 7
+TEMPLATE_VERSION = 8
 
 # Bumped when already-written media files need rewriting, as opposed to the
 # card templates. Unlike a template change this needs no permission and can't
@@ -99,7 +99,7 @@ def _notetype_is_current(nt) -> bool:
     and is skipped forever. Comparing the real templates means a declined or
     failed upgrade is simply noticed again next launch.
     """
-    from .card_builder import DOC_FIELDS, _CSS, _FRONT_TMPL, _back_tmpl
+    from .card_builder import DOC_FIELDS, _CSS, _front_tmpl, _back_tmpl
 
     names = {f["name"] for f in nt["flds"]}
     if "Remarks" in names:          # pre-v3 field name, renamed on upgrade
@@ -109,8 +109,9 @@ def _notetype_is_current(nt) -> bool:
     # Someone who declined the one-time full sync has no document fields and
     # gets templates without the buttons — for them that IS up to date, so
     # compare against the same thing ensure_note_type would write for them.
-    afmt = _back_tmpl(all(f in names for f in DOC_FIELDS))
-    return all(t.get("qfmt") == _FRONT_TMPL and t.get("afmt") == afmt
+    docs = all(f in names for f in DOC_FIELDS)
+    qfmt, afmt = _front_tmpl(docs), _back_tmpl(docs)
+    return all(t.get("qfmt") == qfmt and t.get("afmt") == afmt
                for t in nt["tmpls"])
 
 
@@ -138,10 +139,8 @@ def _maybe_offer_template_upgrade() -> None:
 
     if askUser(
         "PDF Occlusion's card templates were updated.\n\n"
-        "The Notes / Slides buttons can now open on your phone, for PDFs "
-        "published to the web (see \"pdf_hosting\" in the add-on's config). "
-        "Where they can't open anything they're hidden instead of doing "
-        "nothing.\n\n"
+        "The Notes and Slides buttons now also appear on the front of each "
+        "card, under the caption.\n\n"
         "Update your existing cards now?\n"
         "(if your cards predate the Notes/Slides buttons this also adds two "
         "fields to the note type, so Anki will ask for a one-time full sync)",

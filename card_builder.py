@@ -62,6 +62,7 @@ _FRONT_TMPL = """\
 </div>
 <div id="io-header">{{Header}}</div>
 <div id="io-preload" aria-hidden="true">{{Answer Mask}}</div>
+@@FRONT_DOC_BUTTONS@@
 <script>
 (function(){
   function norm(id){
@@ -166,6 +167,14 @@ _BACK_TMPL = """\
   ">Show All</button>
 @@DOC_BUTTONS@@
 </div>"""
+
+
+def _front_tmpl(with_docs: bool) -> str:
+    """Front template; the Notes/Slides buttons sit under the caption here
+    too, so a slide can be checked before answering. Same rule as the back:
+    only when the note type has the fields."""
+    bar = ('<div id="io-toggle-bar">\n' + _DOC_BUTTONS + "\n</div>") if with_docs else ""
+    return _FRONT_TMPL.replace("@@FRONT_DOC_BUTTONS@@", bar)
 
 
 def _back_tmpl(with_docs: bool) -> str:
@@ -430,7 +439,7 @@ def ensure_note_type(col: Collection, name: str = "PDF Occlusion") -> NotetypeDi
         has_docs = _ensure_doc_fields(col, nt)
         nt["css"] = _CSS
         for tmpl in nt["tmpls"]:
-            tmpl["qfmt"] = _FRONT_TMPL
+            tmpl["qfmt"] = _front_tmpl(has_docs)
             tmpl["afmt"] = _back_tmpl(has_docs)
         mm.save(nt)
         # adding fields invalidates the dict we hold — reload before use
@@ -445,7 +454,7 @@ def ensure_note_type(col: Collection, name: str = "PDF Occlusion") -> NotetypeDi
         mm.add_field(nt, mm.new_field(fname))
 
     tmpl = mm.new_template("Card")
-    tmpl["qfmt"] = _FRONT_TMPL
+    tmpl["qfmt"] = _front_tmpl(True)
     tmpl["afmt"] = _back_tmpl(True)
     mm.add_template(nt, tmpl)
     mm.add(nt)
