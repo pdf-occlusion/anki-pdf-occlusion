@@ -122,7 +122,7 @@ _DOC_LINK_JS = """\
 _DOC_BUTTONS = "\n".join(
     [_DOC_BTN_TMPL % {"field": DOC_FIELD_BY_KIND[kind], "prefix": JS_PREFIX,
                       "kind": kind, "label": label}
-     for kind, label in (("notes", "Notes"), ("slides", "Slides"))]
+     for kind, label in (("slides", "Slides"), ("notes", "Notes"))]
     + [_DOC_LINK_JS]
 )
 
