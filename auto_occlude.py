@@ -77,7 +77,7 @@ DEFAULTS = {
     "density": "balanced",
     **{key: opts[0][0] for key, _, opts in MORE},
     "skip_admin": True, "custom": "", "use_notes": True, "scope": "empty",
-    "make": "occlusion", "quiz_style": "step1", "quiz_count": 20,
+    "make": "occlusion", "quiz_style": "step1", "quiz_count": 20, "card_style": "complete",
     "show_more": False,
 }
 # what the server gets with every batch
@@ -687,21 +687,31 @@ class SignIn:
 
 # ------------------------------------------------------------------ the window
 
-MAKES = [("occlusion", "Boxes"), ("atomic", "Cards"), ("quiz", "Quiz")]
-CARD_TEMPLATES = [
-    ("Step 1", ""),
-    ("Teach from zero", "I am new to this topic: start with what each term means and build up; plain words."),
-    ("High-yield only", "Only what boards test most; skip anything secondary."),
+MAKES = [("occlusion", "Image occlusion"), ("atomic", "Cloze cards"), ("quiz", "Practice quiz")]
+# Cloze card styles: how deep the cards go. The text is added to the
+# student's own instructions when the cards are written.
+CARD_STYLES = [
+    ("complete", "Complete", ""),
+    ("essentials", "Essentials", "Only what exams test most; skip anything secondary."),
+    ("scratch", "From scratch", "I am new to this topic: start with what each term means and build up; plain words."),
 ]
-QUIZ_STYLES = [("step1", "Step 1"), ("shelf", "Shelf"), ("recall", "Quick recall")]
+# Quiz styles, named for the kind of question rather than one exam; the
+# caption says which exams each one is for. Values are the server's.
+QUIZ_STYLES = [
+    ("step1", "Basic science", "Step 1, COMLEX 1, blocks"),
+    ("shelf", "Clinical", "Step 2 CK, shelf, Step 3"),
+    ("recall", "Quick recall", "Any exam"),
+]
+QUIZ_COUNT = (5, 40)       # the server's limits
 
 
 def _preview(kind: str, size: int = 56):
-    """A tiny drawing of what each choice makes: a slide with boxes, a cloze card, a question."""
+    """A small drawing of each choice: what it makes, or how its questions look."""
     from aqt.qt import QIcon, QPainter, QPixmap, QColor, QPen, QRectF
     from aqt.theme import theme_manager
     night = theme_manager.night_mode
     ink = QColor(220, 220, 225) if night else QColor(58, 58, 60)
+    soft = QColor(ink); soft.setAlpha(110)
     mask = QColor(124, 124, 128)
     accent = QColor(150, 128, 210) if night else QColor(110, 90, 168)
     pm = QPixmap(size * 2, size * 2)
@@ -711,170 +721,234 @@ def _preview(kind: str, size: int = 56):
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setPen(QPen(ink, 1.6))
     p.setBrush(QColor(0, 0, 0, 0))
-    if kind == "occlusion":
-        p.drawRoundedRect(QRectF(6, 12, size - 12, size - 24), 3, 3)
-        p.fillRect(QRectF(13, 20, 16, 6), mask)
-        p.fillRect(QRectF(13, 30, 22, 6), accent)
-        p.drawLine(33, 23, size - 13, 23)
-    elif kind == "atomic":
-        p.drawRoundedRect(QRectF(8, 14, size - 16, size - 28), 4, 4)
-        p.drawLine(15, 24, size - 15, 24)
-        p.drawLine(15, 32, 24, 32)
-        p.fillRect(QRectF(26, 29, 14, 6), accent)
-    else:
-        p.drawLine(10, 14, size - 10, 14)
-        for k in range(3):
-            y = 24 + k * 9
-            p.setBrush(accent if k == 1 else QColor(0, 0, 0, 0))
-            p.drawEllipse(QRectF(10, y - 3, 6, 6))
+    s = size
+
+    def lines(x, y, widths, gap=6, col=soft, w=1.6):
+        p.setPen(QPen(col, w))
+        for k, ww in enumerate(widths):
+            p.drawLine(int(x), int(y + k * gap), int(x + ww), int(y + k * gap))
+
+    if kind == "occlusion":        # a slide: a figure with its labels boxed
+        p.drawRoundedRect(QRectF(5, 11, s - 10, s - 22), 3, 3)
+        p.setPen(QPen(soft, 1.4)); p.drawEllipse(QRectF(11, 20, 15, 15))
+        p.fillRect(QRectF(30, 18, 18, 5), mask)
+        p.fillRect(QRectF(30, 26, 14, 5), accent)
+        p.fillRect(QRectF(30, 34, 17, 5), mask)
+    elif kind == "atomic":         # a card: a sentence with one blank
+        p.drawRoundedRect(QRectF(7, 13, s - 14, s - 26), 4, 4)
+        lines(13, 22, [s - 26])
+        lines(13, 29, [9])
+        p.fillRect(QRectF(25, 26.5, 14, 5), accent)
+        lines(41, 29, [s - 54])
+        lines(13, 36, [s - 34])
+    elif kind == "quiz":           # a question with five choices, one picked
+        lines(9, 11, [s - 18, s - 26], gap=5, col=ink)
+        for k in range(4):
+            y = 25 + k * 7.5
+            p.setPen(QPen(ink, 1.2))
+            p.setBrush(accent if k == 2 else QColor(0, 0, 0, 0))
+            p.drawEllipse(QRectF(9, y - 2.5, 5, 5))
             p.setBrush(QColor(0, 0, 0, 0))
-            p.drawLine(20, y, size - 14, y)
+            lines(18, y, [s - 32 - (k % 2) * 6])
+    elif kind == "step1":          # a vignette with a lab table, asking why
+        lines(8, 10, [s - 16, s - 16, s - 22, s - 28])
+        p.setPen(QPen(soft, 1.0))
+        p.drawRect(QRectF(8, 33, s - 16, 11)); p.drawLine(int(s / 2), 33, int(s / 2), 44)
+        lines(8, 50, [s - 30], col=accent, w=2.0)
+    elif kind == "shelf":          # a vignette with vitals, asking what next
+        lines(8, 10, [s - 16, s - 20, s - 16, s - 26])
+        p.setPen(QPen(soft, 1.2))
+        for k in range(3):
+            p.drawRoundedRect(QRectF(8 + k * 14, 33, 11, 8), 2, 2)
+        lines(8, 50, [s - 24], col=accent, w=2.0)
+    else:                          # recall: one short line
+        lines(8, 24, [s - 20])
+        lines(8, 34, [s - 34], col=accent, w=2.0)
+    p.end()
+    return QIcon(pm)
+
+
+def _initial_icon(email: str, c: dict, size: int = 26):
+    from aqt.qt import QIcon, QPainter, QPixmap, QColor, QRectF, QFont
+    pm = QPixmap(size * 2, size * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QColor(0, 0, 0, 0))
+    p.setBrush(QColor(c["accent"]))
+    p.drawEllipse(QRectF(1, 1, size - 2, size - 2))
+    f = QFont(); f.setPixelSize(12); f.setBold(True)
+    p.setFont(f)
+    p.setPen(QColor("#ffffff"))
+    p.drawText(QRectF(0, 0, size, size), int(Qt.AlignmentFlag.AlignCenter), (email or "?")[:1].upper())
     p.end()
     return QIcon(pm)
 
 
 class AutoOccludeDialog(QDialog):
-    """Settings, account and Start. Returns the chosen settings via .chosen."""
+    """What to make from the lecture, and how. Returns the chosen settings via .chosen."""
+
+    LABEL_W = 92
 
     def __init__(self, parent, has_notes: bool, slide_counts: dict, primary_qss: str):
         super().__init__(parent)
-        self.setWindowTitle("Auto")
-        self.setMinimumWidth(520)
+        from aqt.qt import QToolButton, QSize, QFrame, QSlider, QMenu
+        from . import pdf_occlusion_dialog as D
+        self._D = D
+        self.c = D._colors()
+        self.setWindowTitle("Generate")
+        self.setObjectName("generate")
+        self.setStyleSheet(D._window_qss(self.c) + self._qss(self.c))
         self.slide_counts = slide_counts
         self.chosen = None
         s = settings()
         root = QVBoxLayout(self)
+        from aqt.qt import QLayout
+        # the window always fits what the chosen output shows, no stretched gaps
+        root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        root.setContentsMargins(20, 18, 20, 16)
+        root.setSpacing(14)
 
-        # what to make: three large choices, each with a small picture of the result
-        from aqt.qt import QToolButton, QSize
-        makes = QHBoxLayout()
+        # what to make: three tiles, each a picture of the result; the account sits apart, top right
+        head = QHBoxLayout()
+        head.setSpacing(10)
         self.make_group = QButtonGroup(self)
-        self.make_group.setExclusive(True)
         self.make_btns = {}
         for value, label in MAKES:
-            b = QToolButton()
-            b.setText(label)
-            b.setIcon(_preview(value))
-            b.setIconSize(QSize(56, 56))
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-            b.setCheckable(True)
-            b.setMinimumSize(132, 96)
-            b.setStyleSheet(
-                "QToolButton{border:1px solid palette(mid); border-radius:10px; padding:6px;}"
-                "QToolButton:checked{border:2px solid #6e5aa8;}")
+            b = self._tile(label, _preview(value), 128, 96, 52)
             b.setChecked(value == (s.get("make") or "occlusion"))
             self.make_group.addButton(b)
             self.make_btns[value] = b
             b.toggled.connect(lambda on, v=value: on and self._set_make(v))
-            makes.addWidget(b)
-        makes.addStretch()
-        root.addLayout(makes)
+            head.addWidget(b)
+        head.addStretch(1)
+        self.acct_btn = QToolButton()
+        self.acct_btn.setObjectName("acct")
+        self.acct_btn.setIconSize(QSize(26, 26))
+        self.acct_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.acct_menu = QMenu(self)
+        self.acct_menu.aboutToShow.connect(self._fill_account_menu)
+        self.acct_btn.setMenu(self.acct_menu)
+        head.addWidget(self.acct_btn, 0, Qt.AlignmentFlag.AlignTop)
+        root.addLayout(head)
 
-        # account
-        acct = QHBoxLayout()
-        self.who = QLabel()
-        self.who.setWordWrap(True)
-        self.sign_btn = QPushButton()
-        self.more_btn = QPushButton("Get more pages")
-        self.more_btn.clicked.connect(lambda: webbrowser.open(f"{SITE}/pricing/"))
-        acct.addWidget(self.who, stretch=1)
-        acct.addWidget(self.more_btn)
-        acct.addWidget(self.sign_btn)
-        root.addLayout(acct)
+        line = QFrame(); line.setObjectName("rule"); line.setFixedHeight(1)
+        root.addWidget(line)
 
-        top = QFormLayout()
-        top.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.scope = QComboBox()
-        for value, label in SCOPES:
-            self.scope.addItem(label, value)
-        self.scope.setCurrentIndex([v for v, _ in SCOPES].index(s["scope"]) if s["scope"] in dict(SCOPES) else 0)
-        self.scope.currentIndexChanged.connect(self._refresh)
-        top.addRow("Slides", self.scope)
+        # the settings, one aligned column of labels
+        self.grid = QGridLayout()
+        self.grid.setHorizontalSpacing(14)
+        self.grid.setVerticalSpacing(12)
+        self.grid.setColumnMinimumWidth(0, self.LABEL_W)
+        self.grid.setColumnStretch(1, 1)
+        self._rows = {}
 
-        # how many cards: three buttons, side by side
-        seg = QHBoxLayout()
-        seg.setSpacing(0)
-        self.density_group = QButtonGroup(self)
-        self.density_group.setExclusive(True)
-        self.density_btns = {}
-        for value, label in DENSITY[2]:
-            b = QPushButton(label)
-            b.setCheckable(True)
-            b.setMinimumWidth(100)
-            b.setChecked(value == s["density"])
-            self.density_group.addButton(b)
-            self.density_btns[value] = b
-            seg.addWidget(b)
-        seg.addStretch()
-        top.addRow("Amount", seg)
-        self._density_row = seg
+        self.scope_seg, self.scope_btns = self._segmented([])
+        self._add_row("scope", "Slides", self.scope_seg)
+
+        self.density_seg, self.density_btns = self._segmented(DENSITY[2], s["density"])
+        self._add_row("density", "Amount", self.density_seg)
+
+        self.card_seg, self.card_btns = self._segmented(
+            [(v, n) for v, n, _ in CARD_STYLES],
+            s.get("card_style") if s.get("card_style") in [v for v, _, _ in CARD_STYLES] else "complete")
+        self._add_row("card_style", "Style", self.card_seg)
+
+        quiz_tiles = QHBoxLayout()
+        quiz_tiles.setSpacing(8)
+        self.quiz_group = QButtonGroup(self)
+        self.quiz_btns = {}
+        for value, name, exams in QUIZ_STYLES:
+            b = self._tile(name, _preview(value), 152, 92, 40, caption=exams)
+            b.setChecked(value == (s.get("quiz_style") or "step1"))
+            self.quiz_group.addButton(b)
+            self.quiz_btns[value] = b
+            quiz_tiles.addWidget(b)
+        quiz_tiles.addStretch(1)
+        qw = QWidget(); qw.setLayout(quiz_tiles); quiz_tiles.setContentsMargins(0, 0, 0, 0)
+        self._add_row("quiz_style", "Style", qw, top=True)
+
+        count_row = QHBoxLayout()
+        count_row.setContentsMargins(0, 0, 0, 0)
+        self.quiz_count = QSlider(Qt.Orientation.Horizontal)
+        self.quiz_count.setRange(*QUIZ_COUNT)
+        self.quiz_count.setValue(int(s.get("quiz_count") or 20))
+        self.count_label = QLabel()
+        self.count_label.setObjectName("value")
+        self.count_label.setMinimumWidth(96)
+        self.quiz_count.valueChanged.connect(lambda _v: self._refresh())
+        count_row.addWidget(self.quiz_count, 1)
+        count_row.addWidget(self.count_label)
+        cw = QWidget(); cw.setLayout(count_row)
+        self._add_row("quiz_count", "Questions", cw)
 
         self.notes = QCheckBox("Use the notes PDF")
         self.notes.setChecked(bool(s["use_notes"]) and has_notes)
-        self.notes.setVisible(has_notes)
-        if has_notes:
-            top.addRow("", self.notes)
+        self._add_row("notes", "", self.notes)
+        self._has_notes = has_notes
 
-        # the student's own words, kept between documents
         self.custom = QPlainTextEdit()
+        self.custom.setObjectName("instructions")
         self.custom.setPlainText(s["custom"])
-        self.custom.setFixedHeight(64)
-        top.addRow("Your instructions", self.custom)
+        self.custom.setFixedHeight(58)
+        self.custom.setFixedWidth(474)
+        self._add_row("custom", "Instructions", self.custom, top=True)
+        root.addLayout(self.grid)
 
-        self.templates = QComboBox()
-        for name, _text in CARD_TEMPLATES:
-            self.templates.addItem(name)
-        self.templates.activated.connect(
-            lambda i: self.custom.setPlainText(CARD_TEMPLATES[i][1]))
-        top.addRow("Style", self.templates)
-        self.quiz_style = QComboBox()
-        for value, label in QUIZ_STYLES:
-            self.quiz_style.addItem(label, value)
-        self.quiz_count = QComboBox()
-        for n in (10, 20, 30):
-            self.quiz_count.addItem(f"{n} questions", n)
-        self.quiz_count.setCurrentIndex(1)
-        qrow = QHBoxLayout()
-        qrow.addWidget(self.quiz_style)
-        qrow.addWidget(self.quiz_count)
-        qrow.addStretch()
-        top.addRow("Questions", qrow)
-        self._quiz_row = qrow
-        self._rows = top
-        root.addLayout(top)
-
-        # the rest, folded away until asked for
+        # image occlusion's finer settings, folded away
         self.more_toggle = QPushButton()
+        self.more_toggle.setObjectName("link")
         self.more_toggle.setFlat(True)
-        self.more_toggle.setStyleSheet("QPushButton{text-align:left; padding:4px 0; color:palette(link);}")
         self.more_toggle.clicked.connect(lambda: self._show_more(not self.more.isVisible()))
-        root.addWidget(self.more_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
-
         self.more = QWidget()
-        form = QFormLayout(self.more)
+        form = QGridLayout(self.more)
         form.setContentsMargins(0, 0, 0, 0)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+        form.setColumnMinimumWidth(0, self.LABEL_W)
+        form.setColumnStretch(1, 1)
         self.combos = {}
-        for item in MORE:
-            form.addRow(item[1], self._combo(item, s))
+        for r, item in enumerate(MORE):
+            form.addWidget(self._label(item[1]), r, 0)
+            form.addWidget(self._combo(item, s), r, 1)
         self.skip_admin = QCheckBox("Skip title, objective and reference slides")
         self.skip_admin.setChecked(bool(s["skip_admin"]))
-        form.addRow("", self.skip_admin)
+        form.addWidget(self.skip_admin, len(MORE), 1)
+        mrow = QHBoxLayout()
+        mrow.addSpacing(self.LABEL_W + 14)
+        mrow.addWidget(self.more_toggle)
+        mrow.addStretch(1)
+        root.addLayout(mrow)
         root.addWidget(self.more)
 
-        buttons = QDialogButtonBox()
-        self.start_btn = buttons.addButton("Start", QDialogButtonBox.ButtonRole.AcceptRole)
+        # what it uses, and go
+        foot = QHBoxLayout()
+        foot.setSpacing(8)
+        self.usage = QLabel()
+        self.usage.setObjectName("usage")
+        self.topup_btn = QPushButton("Top up")
+        self.topup_btn.setObjectName("secondary")
+        self.topup_btn.clicked.connect(lambda: webbrowser.open(f"{SITE}/pricing/"))
+        cancel = QPushButton("Cancel")
+        cancel.setObjectName("secondary")
+        cancel.clicked.connect(self.reject)
+        self.start_btn = QPushButton()
         self.start_btn.setStyleSheet(primary_qss)
-        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        self.start_btn.setDefault(True)
+        self.start_btn.clicked.connect(self._start)
+        foot.addWidget(self.usage, 1)
+        foot.addWidget(self.topup_btn)
+        foot.addSpacing(6)
+        foot.addWidget(cancel)
+        foot.addWidget(self.start_btn)
+        root.addLayout(foot)
 
-        self.sign_btn.clicked.connect(self._sign)
         self._show_more(bool(s.get("show_more")))
         self.balance = None
         self.free_pages = 50
-        self._set_make(s.get("make") if s.get("make") in dict(MAKES) else "occlusion")
+        self._set_make(s.get("make") if s.get("make") in dict(MAKES) else "occlusion",
+                       scope=s.get("scope"))
         self._refresh()
         self._load_balance()
         telemetry.watch_buttons(self, "auto_occlude")
@@ -883,6 +957,106 @@ class AutoOccludeDialog(QDialog):
         # it back to the front whenever Anki becomes the active app again.
         QApplication.instance().applicationStateChanged.connect(self._keep_in_front)
 
+    # --- building blocks --------------------------------------------------
+    @staticmethod
+    def _qss(c: dict) -> str:
+        return (
+            f"QDialog#generate {{ background:{c['window']}; }}"
+            f"QFrame#rule {{ background:{c['line']}; border:none; }}"
+            f"QLabel {{ color:{c['text']}; }}"
+            f"QLabel#rowLabel {{ color:{c['sub']}; }}"
+            f"QLabel#usage {{ color:{c['sub']}; }}"
+            f"QLabel#usage[short=\"true\"] {{ color:#d93025; }}"
+            f"QLabel#value {{ color:{c['text']}; }}"
+            f"QToolButton#tile {{ background:{c['btn']}; color:{c['text']};"
+            f" border:1px solid {c['btn_line']}; border-radius:10px; padding:6px 4px 8px 4px; }}"
+            f"QToolButton#tile:hover {{ background:{c['btn_hover']}; }}"
+            f"QToolButton#tile:checked {{ border:2px solid {c['accent']}; padding:5px 3px 7px 3px; }}"
+            f"QToolButton#acct {{ border:none; background:transparent; padding:0; }}"
+            f"QToolButton#acct::menu-indicator {{ image:none; width:0; }}"
+            f"QPushButton#link {{ border:none; background:transparent; color:{c['accent']};"
+            f" padding:0; text-align:left; }}"
+            f"QPlainTextEdit#instructions {{ background:{c['btn']}; color:{c['text']};"
+            f" border:1px solid {c['btn_line']}; border-radius:7px; padding:4px 6px; }}"
+            f"QFrame#seg QToolButton#segBtn {{ padding:0 12px; color:{c['text']}; }}"
+        )
+
+    def _tile(self, name, icon, w, h, icon_px, caption=""):
+        from aqt.qt import QToolButton, QSize
+        b = QToolButton()
+        b.setObjectName("tile")
+        b.setText(name + (f"\n{caption}" if caption else ""))
+        b.setIcon(icon)
+        b.setIconSize(QSize(icon_px, icon_px))
+        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        b.setCheckable(True)
+        b.setFixedSize(w, h + (16 if caption else 0))
+        if caption:
+            f = b.font(); f.setPointSizeF(max(8.5, f.pointSizeF() - 1.5)); b.setFont(f)
+        return b
+
+    def _segmented(self, options, current=None):
+        from aqt.qt import QFrame, QToolButton
+        from aqt.qt import QSizePolicy
+        seg = QFrame()
+        seg.setObjectName("seg")
+        seg.setFixedHeight(34)
+        seg.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        row = QHBoxLayout(seg)
+        row.setContentsMargins(3, 3, 3, 3)
+        row.setSpacing(2)
+        group = QButtonGroup(seg)
+        btns = {}
+        seg._row, seg._group = row, group
+        for value, label in options:
+            self._seg_add(seg, btns, value, label, value == current)
+        wrap = QWidget()
+        wl = QHBoxLayout(wrap)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.addWidget(seg)
+        wl.addStretch(1)
+        wrap._seg = seg
+        return wrap, btns
+
+    def _seg_add(self, seg, btns, value, label, checked):
+        from aqt.qt import QToolButton
+        b = QToolButton()
+        b.setObjectName("segBtn")
+        b.setText(label)
+        b.setCheckable(True)
+        b.setFixedHeight(28)
+        b.setChecked(checked)
+        b.toggled.connect(lambda on: on and self._refresh())
+        seg._group.addButton(b)
+        seg._row.addWidget(b)
+        btns[value] = b
+
+    def _label(self, text):
+        lab = QLabel(text)
+        lab.setObjectName("rowLabel")
+        lab.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        lab.setFixedWidth(self.LABEL_W)
+        return lab
+
+    def _add_row(self, key, label, widget, top=False):
+        r = self.grid.rowCount()
+        lab = self._label(label)
+        if top:
+            lab.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            lab.setContentsMargins(0, 6, 0, 0)
+        self.grid.addWidget(lab, r, 0)
+        self.grid.addWidget(widget, r, 1)
+        self._rows[key] = (lab, widget)
+
+    def _show_row(self, key, on):
+        for w in self._rows[key]:
+            w.setVisible(on)
+
+    @staticmethod
+    def _picked(btns, default):
+        return next((k for k, b in btns.items() if b.isChecked()), default)
+
+    # --- window behaviour -------------------------------------------------
     def _keep_in_front(self, state=None):
         if self.isVisible() and (state is None or state == Qt.ApplicationState.ApplicationActive):
             self.raise_()
@@ -899,45 +1073,44 @@ class AutoOccludeDialog(QDialog):
             pass
         super().done(r)
 
-    def _set_make(self, make: str):
+    def _set_make(self, make: str, scope: Optional[str] = None):
         """Show only what applies to the chosen output."""
         self.make = make
         boxes, cards, quiz = make == "occlusion", make == "atomic", make == "quiz"
-
-        def row(field, show):
-            label = self._rows.labelForField(field)
-            if label is not None:
-                label.setVisible(show)
-            if isinstance(field, QWidget):
-                field.setVisible(show)
-            else:
-                for i in range(field.count()):
-                    w = field.itemAt(i).widget()
-                    if w is not None:
-                        w.setVisible(show)
-        keep = self.scope.currentData()
-        options = SCOPES if boxes else [("all", "All slides"), ("current", "Only this slide")]
-        self.scope.blockSignals(True)
-        self.scope.clear()
-        for value, label in options:
-            self.scope.addItem(label, value)
+        keep = scope or self._picked(self.scope_btns, None)
+        options = ([("current", "This slide"), ("empty", "Unboxed"), ("all", "All")] if boxes
+                   else [("current", "This slide"), ("all", "All")])
+        seg = self.scope_seg._seg
+        for b in list(self.scope_btns.values()):
+            seg._group.removeButton(b)
+            seg._row.removeWidget(b)
+            b.hide()
+            b.setParent(None)
+            b.deleteLater()
+        self.scope_btns.clear()
         values = [v for v, _ in options]
-        self.scope.setCurrentIndex(values.index(keep) if keep in values else 0)
-        self.scope.blockSignals(False)
-        row(self._density_row, boxes)
-        row(self.templates, cards)
-        row(self._quiz_row, quiz)
+        pick = keep if keep in values else ("empty" if boxes else "all")
+        for value, label in options:
+            self._seg_add(seg, self.scope_btns, value, label, value == pick)
+        self._show_row("density", boxes)
+        self._show_row("card_style", cards)
+        self._show_row("quiz_style", quiz)
+        self._show_row("quiz_count", quiz)
+        self._show_row("notes", self._has_notes and not quiz)
         self.more_toggle.setVisible(boxes)
         if not boxes:
             self.more.setVisible(False)
-        self.start_btn.setText({"occlusion": "Make boxes", "atomic": "Make cards", "quiz": "Make quiz"}[make])
+        if quiz and not getattr(self, "_count_touched", False):
+            # a starting point that fits the lecture: about one question per two slides
+            n = self.slide_counts.get("all", 0)
+            if n and int(settings().get("quiz_count") or 0) == DEFAULTS["quiz_count"]:
+                self.quiz_count.setValue(max(10, min(QUIZ_COUNT[1], round(n / 2))))
         self._refresh()
         self.adjustSize()
 
     def _show_more(self, on: bool):
         self.more.setVisible(on)
         self.more_toggle.setText("Fewer settings" if on else "More settings")
-        self.setMinimumWidth(520)
         self.adjustSize()
 
     def _combo(self, item, s) -> QComboBox:
@@ -950,6 +1123,7 @@ class AutoOccludeDialog(QDialog):
         self.combos[key] = c
         return c
 
+    # --- account ----------------------------------------------------------
     def _load_balance(self):
         a = account()
         if not a.get("token"):
@@ -972,6 +1146,27 @@ class AutoOccludeDialog(QDialog):
             self.balance = me
         self._refresh()
 
+    def _fill_account_menu(self):
+        m = self.acct_menu
+        m.clear()
+        a = account()
+        b = self.balance or {}
+        m.addAction(a.get("email") or "Signed in").setEnabled(False)
+        parts = []
+        if b.get("plan") in ("monthly", "yearly"):
+            parts.append(f"{b['plan'].capitalize()} plan")
+        if b.get("pages_left") is not None:
+            parts.append(f"{b['pages_left']:,} pages")
+        if b.get("quizzes_left") is not None:
+            parts.append(f"{b['quizzes_left']} quiz{'zes' if b['quizzes_left'] != 1 else ''}")
+        if parts:
+            m.addAction(", ".join(parts)).setEnabled(False)
+        m.addSeparator()
+        m.addAction("Top up", lambda: webbrowser.open(f"{SITE}/pricing/"))
+        m.addAction("Account", lambda: webbrowser.open(f"{SITE}/account/"))
+        m.addSeparator()
+        m.addAction("Sign out", self._sign)
+
     def _sign(self):
         if account().get("token"):
             telemetry.track("sign_out")
@@ -984,52 +1179,64 @@ class AutoOccludeDialog(QDialog):
             self._signin = SignIn(self, lambda: (self._refresh(), self._load_balance()))
             self._signin.start()
 
+    # --- state ------------------------------------------------------------
     def _refresh(self):
+        if not hasattr(self, "start_btn"):
+            return
         a = account()
         signed = bool(a.get("token"))
+        b = self.balance or {}
+        self.acct_btn.setVisible(signed)
         if signed:
-            left = self.balance.get("pages_left") if self.balance else None
-            plan = (self.balance or {}).get("plan")
-            tail = "" if left is None else f", {left:,} page{'s' if left != 1 else ''}"
-            quizzes = (self.balance or {}).get("quizzes_left")
-            if quizzes is not None:
-                tail += f", {quizzes} quiz{'zes' if quizzes != 1 else ''}"
-            if plan in ("monthly", "yearly"):
-                tail = f", {plan} plan" + tail
-            self.who.setText(f"{a.get('email') or 'Signed in'}{tail}")
-        else:
-            self.who.setText(f"{self.free_pages} pages free")
-        self.sign_btn.setText("Sign out" if signed else "Sign in")
-        self.more_btn.setVisible(signed)
-        n = self.slide_counts.get(self.scope.currentData(), 0)
+            self.acct_btn.setIcon(_initial_icon(a.get("email") or "", self.c))
         make = getattr(self, "make", "occlusion")
-        plural = "s" if n != 1 else ""
-        self.start_btn.setText({"occlusion": f"Make boxes on {n} slide{plural}",
-                                "atomic": f"Make cards from {n} slide{plural}",
-                                "quiz": f"Make a quiz from {n} slide{plural}"}[make])
+        scope = self._picked(self.scope_btns, "all")
+        n = self.slide_counts.get(scope, 0)
+        q = self.quiz_count.value()
+        self.count_label.setText(f"{q} questions")
         if make == "quiz":
-            left = (self.balance or {}).get("quizzes_left") if signed else None
-            need = 1
+            need, left, unit = 1, (b.get("quizzes_left") if signed else None), "quiz"
         else:
-            left = self.balance.get("pages_left") if (signed and self.balance) else None
-            need = n
-        self.start_btn.setEnabled(signed and n > 0 and (left is None or need <= left))
+            need, left, unit = n, (b.get("pages_left") if signed else None), "page"
+        plural = lambda k, u: f"{k:,} {u}{'zes' if u == 'quiz' and k != 1 else ('s' if k != 1 and u != 'quiz' else '')}"
         short = signed and left is not None and need > left
-        self.more_btn.setStyleSheet(
-            "QPushButton{color:#c0392b;border:1.5px solid #c0392b;border-radius:6px;"
-            "padding:5px 14px;font-weight:bold;}" if short else "")
+        if not signed:
+            text = f"{self.free_pages} pages free"
+        elif left is None:
+            text = f"Uses {plural(need, unit)}"
+        elif short:
+            text = f"Needs {plural(need, unit)}, {left:,} left"
+        else:
+            text = f"Uses {need:,} of {plural(left, unit)}"
+        if make == "occlusion" and scope == "all" and self.slide_counts.get("empty", n) < n:
+            text += ", replaces your boxes"
+        self.usage.setText(text)
+        self.usage.setProperty("short", "true" if short else "false")
+        self.usage.style().unpolish(self.usage)
+        self.usage.style().polish(self.usage)
+        self.topup_btn.setVisible(short)
+        self.start_btn.setText("Sign in" if not signed else
+                               {"occlusion": "Make boxes", "atomic": "Make cards", "quiz": "Make quiz"}[make])
+        self.start_btn.setEnabled(not signed or (n > 0 and not short))
+
+    def _start(self):
+        if not account().get("token"):
+            self._sign()
+            return
+        self._accept()
 
     def _gather(self) -> dict:
         s = {k: c.currentData() for k, c in self.combos.items()}
-        s["density"] = next((k for k, b in self.density_btns.items() if b.isChecked()), "balanced")
+        s["density"] = self._picked(self.density_btns, "balanced")
         s["skip_admin"] = self.skip_admin.isChecked()
         s["custom"] = self.custom.toPlainText().strip()[:1000]
         s["use_notes"] = self.notes.isChecked()
-        s["scope"] = self.scope.currentData()
+        s["scope"] = self._picked(self.scope_btns, "all")
         s["show_more"] = self.more.isVisible()
         s["make"] = getattr(self, "make", "occlusion")
-        s["quiz_style"] = self.quiz_style.currentData()
-        s["quiz_count"] = self.quiz_count.currentData()
+        s["card_style"] = self._picked(self.card_btns, "complete")
+        s["quiz_style"] = self._picked(self.quiz_btns, "step1")
+        s["quiz_count"] = self.quiz_count.value()
         return s
 
     def _accept(self):
@@ -1052,6 +1259,12 @@ class Run:
         # "atomic" makes text cloze cards (paid) instead of occlusion boxes; slides the
         # card writer says are better tested by location come back in self.occlude
         self.atomic = s.get("make") == "atomic"
+        if self.atomic:
+            # the card style is a few words of instruction ahead of the student's own
+            style = dict((v, t) for v, _n, t in CARD_STYLES).get(s.get("card_style"), "")
+            if style:
+                s = {**s, "custom": (style + "\n" + (s.get("custom") or "")).strip()[:1000]}
+                self.s = s
         self.quiz = s.get("make") == "quiz"
         self.quiz_url = None
         self.on_page_cards = on_page_cards

@@ -981,7 +981,7 @@ class PDFOcclusionDialog(QDialog):
         zoom_menu.aboutToShow.connect(self._sync_zoom_slider)
         self._zoom_label.setMenu(zoom_menu)
 
-        self._auto_btn = QPushButton("Auto")
+        self._auto_btn = QPushButton("Generate")
         self._auto_btn.setObjectName("secondary")
         self._auto_btn.setIconSize(QSize(18, 18))
         self._auto_btn.clicked.connect(self._open_auto_occlude)

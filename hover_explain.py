@@ -432,28 +432,61 @@ def _paint_cloze(p, art, t, k):
 
 
 def _paint_auto(p, art, t, k):
-    s = _slide_rect(art)
-    _slide(p, s, k)
-    _content(p, s, k)
-    fade = 1 - _ph(t, .86, .98)
-    targets = [_u(s, .09, .33, .36, .54), _u(s, *_BOXES[0]),
-               _u(s, *_BOXES[1]), _u(s, *_BOXES[2])]
-    # a thin line reads the slide top to bottom; boxes pop as it passes
-    scan = _io(_ph(t, .06, .66))
-    y = _lerp(s.top() + 3, s.bottom() - 3, scan)
-    if .04 < t < .72:
-        al = min(_ph(t, .04, .10), 1 - _ph(t, .64, .72))
-        p.setPen(QPen(_a(k.band_line, al * .8), 1))
-        p.drawLine(QPointF(s.left() + 3, y), QPointF(s.right() - 3, y))
-    order = sorted(range(len(targets)), key=lambda i: targets[i].center().y())
-    for n, i in enumerate(order):
-        r = targets[i]
-        at = (r.center().y() - s.top()) / s.height()
-        # when the line reaches the box's centre
-        t0 = _lerp(.06, .66, _inv_io(at))
-        sc, al = _pop(_ph(t, t0, t0 + .14))
-        if al > 0:
-            _box(p, _scaled(r, sc), k, al * fade)
+    """Generate: the lecture on the left becomes, in turn, occlusion boxes,
+    cloze cards and a practice quiz on the right."""
+    src = QRectF(art.x() + 10, art.y() + 26, 62, 44)
+    _slide(p, src, k)
+    _content(p, src, k)
+    # the three results, a third of the loop each
+    out = QRectF(art.right() - 82, art.y() + 18, 72, 60)
+    phase = min(2, int(t * 3))
+    local = t * 3 - phase
+    enter = _out(_ph(local, .0, .22))
+    leave = _ph(local, .80, .98)
+    al = _clamp(enter * (1 - leave))
+    dx = 10 * (1 - enter) - 10 * leave
+    # a small arrow from the lecture to the result, pulsing as each one arrives
+    a0 = QPointF(src.right() + 6, src.center().y())
+    a1 = QPointF(out.left() - 6 + 0 * dx, src.center().y())
+    pulse = 0.5 + 0.5 * (1 - _ph(local, .0, .35))
+    p.setPen(QPen(_a(k.accent, .55 + .35 * pulse), 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.drawLine(a0, a1)
+    p.drawLine(a1, a1 + QPointF(-4, -3)); p.drawLine(a1, a1 + QPointF(-4, 3))
+    p.save()
+    p.translate(dx, 0)
+    if phase == 0:          # image occlusion: the slide itself, boxed
+        s = QRectF(out.x(), out.y() + 6, out.width(), out.height() - 12)
+        _slide(p, s, k, al)
+        _content(p, s, k, al)
+        for n, b in enumerate(_BOXES):
+            sc, a2 = _pop(_ph(local, .18 + n * .12, .34 + n * .12))
+            if a2 > 0:
+                _box(p, _scaled(_u(s, *b), sc), k, al * a2)
+    elif phase == 1:        # cloze cards: a small stack, a sentence with one blank
+        for n in (2, 1, 0):
+            c = QRectF(out.x() + n * 4, out.y() + 10 - n * 4, out.width() - 10, out.height() - 22)
+            _rrect(p, c, 3, _a(k.slide, al), _a(QColor(0, 0, 0, 40), al))
+        c = QRectF(out.x(), out.y() + 10, out.width() - 10, out.height() - 22)
+        _bar(p, QRectF(c.x() + 6, c.y() + 8, c.width() - 12, 3.5), _a(k.bar, al))
+        _bar(p, QRectF(c.x() + 6, c.y() + 16, 10, 3.5), _a(k.bar, al))
+        blank = _ph(local, .25, .45)
+        _rrect(p, QRectF(c.x() + 19, c.y() + 14.5, 18, 6.5), 1.5, _a(k.accent, al * (.35 + .65 * blank)))
+        _bar(p, QRectF(c.x() + 40, c.y() + 16, c.width() - 46, 3.5), _a(k.bar, al))
+        _bar(p, QRectF(c.x() + 6, c.y() + 24, c.width() - 24, 3.5), _a(k.bar, al))
+    else:                   # practice quiz: a question, five choices, one picked
+        c = QRectF(out.x(), out.y() + 2, out.width() - 6, out.height() - 4)
+        _rrect(p, c, 3, _a(k.slide, al), _a(QColor(0, 0, 0, 40), al))
+        _bar(p, QRectF(c.x() + 6, c.y() + 6, c.width() - 12, 3), _a(k.title, al))
+        _bar(p, QRectF(c.x() + 6, c.y() + 12, c.width() - 22, 3), _a(k.title, al))
+        pick = _ph(local, .40, .55)
+        for n in range(5):
+            y = c.y() + 21 + n * 6.4
+            on = n == 2 and pick > 0
+            p.setPen(QPen(_a(k.accent if on else QColor(0, 0, 0, 90), al), 1))
+            p.setBrush(_a(k.accent, al * pick) if on else Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(c.x() + 9, y + 1.5), 2.2, 2.2)
+            _bar(p, QRectF(c.x() + 15, y, c.width() - 26 - (n % 2) * 8, 3), _a(k.bar, al))
+    p.restore()
 
 
 def _inv_io(y: float) -> float:
@@ -705,7 +738,7 @@ LABELS = {
     "detect": ("Detect", "F"),
     "cloze": ("Cloze cards", "Ctrl+Shift+V"),
     "zoom": ("Zoom", "Ctrl+= Ctrl+-"),
-    "auto": ("Auto", ""),
+    "auto": ("Generate", ""),
     "create": ("Create cards", ""),
 }
 
@@ -713,7 +746,7 @@ LABELS = {
 # shown as a second, smaller line.
 _LIVE_TIP = {"create"}
 
-_PERIOD = {"mode_ao": 3.6, "mode_oa": 3.6, "text": 3.8, "auto": 3.0, "create": 3.0, "zoom": 2.8, "slides": 3.0,
+_PERIOD = {"auto": 4.5, "mode_ao": 3.6, "mode_oa": 3.6, "text": 3.8, "create": 3.0, "zoom": 2.8, "slides": 3.0,
            "prev": 3.0, "next": 3.0}
 
 
