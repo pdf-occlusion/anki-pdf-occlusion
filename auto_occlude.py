@@ -1359,6 +1359,8 @@ class Run:
                 "settings": {k: self.s[k] for k in SENT}}
         if self.quiz:
             body["kind"] = "quiz"
+            # so the server can check the balance covers the questions asked for
+            body["settings"]["count"] = int(self.s.get("quiz_count") or 20)
         # the server reads the whole document before the first batch
         in_background(lambda: call("/v1/jobs", body, self.token, 300), self._job_started)
 
