@@ -1017,7 +1017,8 @@ class PDFOcclusionDialog(QDialog):
 
         self._create_btn = _CountButton()
         self._create_btn.setAccessibleName("Create Cards")
-        self._create_btn.setFixedSize(48, 34)
+        self._create_btn.setText("Create")
+        self._create_btn.setFixedHeight(34)
         self._create_btn.setIconSize(QSize(20, 20))
         self._create_btn.setObjectName("primary")
         self._create_btn.setDefault(True)
@@ -1272,7 +1273,8 @@ class PDFOcclusionDialog(QDialog):
         theme changes with the window open."""
         c = _colors()
         self.setStyleSheet(_window_qss(c))
-        self._create_btn.setStyleSheet(_primary_qss(c) + "QPushButton{padding:0;}")
+        # equal padding both sides keeps icon + label centred; the badge sits in the right padding
+        self._create_btn.setStyleSheet(_primary_qss(c) + "QPushButton{padding:0 24px;}")
         self._create_btn.setIcon(_icon("cards", c, 20, color="#ffffff"))
         for b in (self._rail_btn, self._prev_btn, self._next_btn):
             b.setIcon(_icon(b.property("_icon"), c))
