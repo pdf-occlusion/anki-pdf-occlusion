@@ -40,7 +40,7 @@ from . import telemetry
 from .version import VERSION
 
 DEFAULT_SERVER = "https://pdf-occlusion-api.pdf-occlusion.workers.dev"
-SITE = "https://pdf-occlusion.github.io"
+SITE = "https://pdf-occlusion.com"
 MAX_PIXELS = 1_150_000
 _ACCOUNT = os.path.join(os.path.dirname(__file__), "user_files", "account.json")
 
